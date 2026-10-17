@@ -69,10 +69,11 @@ jobs:
           AWS_SECRET_ACCESS_KEY: testtest
           AWS_REGION: eu-west-1
         run: >
-          cargo llvm-cov --workspace --all-features
+          cargo llvm-cov --workspace --all-features --exclude registry-e2e
           --ignore-filename-regex 'crates/lambdas/.*/src/main\.rs'
           --fail-under-lines 80 --summary-only
           -- --include-ignored
+        # registry-e2e's ignored test needs a deployed stack; the release job runs it.
 
   template:
     runs-on: ubuntu-24.04
