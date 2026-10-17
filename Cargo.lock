@@ -6,8 +6,19 @@ version = 4
 name = "admin-api"
 version = "0.1.0"
 dependencies = [
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-lambda",
+ "aws-sdk-s3",
+ "lambda_http",
+ "lambda_runtime",
  "registry-application",
  "registry-domain",
+ "registry-dynamodb",
+ "registry-http",
+ "registry-lambda",
+ "registry-s3",
+ "tokio",
 ]
 
 [[package]]
@@ -1335,8 +1346,18 @@ dependencies = [
 name = "index-publisher"
 version = "0.1.0"
 dependencies = [
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-lambda",
+ "aws-sdk-s3",
+ "lambda_runtime",
  "registry-application",
  "registry-domain",
+ "registry-dynamodb",
+ "registry-lambda",
+ "registry-s3",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -1665,8 +1686,19 @@ dependencies = [
 name = "publish-api"
 version = "0.1.0"
 dependencies = [
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-lambda",
+ "aws-sdk-s3",
+ "lambda_http",
+ "lambda_runtime",
  "registry-application",
  "registry-domain",
+ "registry-dynamodb",
+ "registry-http",
+ "registry-lambda",
+ "registry-s3",
+ "tokio",
 ]
 
 [[package]]

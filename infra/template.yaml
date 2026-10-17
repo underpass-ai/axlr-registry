@@ -24,6 +24,9 @@ Parameters:
   CatalogName:
     Type: String
     Default: axlr
+  IndexPublicKey:
+    Type: String
+    Description: The registry's minisign public key (the base64 line of its .pub file); admin-api verifies uploaded index signatures against it. The secret key stays offline.
   Stage:
     Type: String
     AllowedValues: [staging, production]
@@ -220,6 +223,7 @@ Resources:
       Environment:
         Variables:
           INDEX_PUBLISHER_FUNCTION: !Ref IndexPublisherFunction
+          INDEX_PUBLIC_KEY: !Ref IndexPublicKey
           DISTRIBUTION_ID: !Ref Distribution
       Events:
         Admin:
