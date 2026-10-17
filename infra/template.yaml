@@ -249,7 +249,7 @@ Resources:
       Handler: bootstrap
       Timeout: 120
       Policies:
-        - DynamoDBReadPolicy: { TableName: !Ref Table }
+        - DynamoDBCrudPolicy: { TableName: !Ref Table }   # reads tools and publishers, appends its audit entry
         - S3CrudPolicy: { BucketName: !Ref Artifacts }
 
   # The test runner needs python3, bash and node, so it is a container image,

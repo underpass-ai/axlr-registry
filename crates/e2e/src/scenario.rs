@@ -71,7 +71,12 @@ impl Scenario {
 
         let expected = tool.bundle().file_digests().iter().map(|(n, d)| (n.as_str().to_owned(), d.to_string())).collect::<Vec<_>>();
         let entry = Self::wait(Duration::from_secs(120), || async {
-            let bytes = admin.fetch_staging_index().await?;
+            // The index publisher runs asynchronously: no staging index yet is "not yet", not a failure.
+            let bytes = match admin.fetch_staging_index().await {
+                Ok(bytes) => bytes,
+                Err(axlr_registry_cli::CliError::Api { status: 404, .. }) => return Ok(None),
+                Err(e) => return Err(e.into()),
+            };
             let index: serde_json::Value = serde_json::from_slice(&bytes)?;
             let found = index["tools"]
                 .as_array()
