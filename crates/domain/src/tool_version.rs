@@ -29,15 +29,9 @@ pub struct ToolVersion {
 
 impl ToolVersion {
     /// Creates a version from a validated bundle signed by the publisher.
-    /// The caller has authorised the publisher's token for the name.
+    /// The caller has authenticated the publisher's signed request.
     pub fn submit(bundle: &ValidBundle, publisher: &Publisher, signature: PublisherSignature, now: Timestamp) -> Result<Self, DomainError> {
-        if !publisher.owns(bundle.name()) {
-            return Err(DomainError::Unauthorized(format!(
-                "publisher {} does not own {}",
-                publisher.id().as_str(),
-                bundle.name().as_str()
-            )));
-        }
+        publisher.may_publish(bundle.name())?;
         let key = publisher
             .active_key(signature.key_id(), now)
             .ok_or_else(|| DomainError::Unauthorized(format!("signature key {} is unknown or revoked", signature.key_id().as_str())))?;
@@ -305,6 +299,9 @@ pub(crate) mod tests {
         assert!(ToolVersion::submit(&other, &p, sig.clone(), NOW).is_err(), "signature over another bundle accepted");
         let stranger = PublisherSignature::sign(&signing_key(9), bundle.bundle_digest());
         assert!(ToolVersion::submit(&bundle, &p, stranger, NOW).is_err(), "unregistered key verified");
+        p.suspend().unwrap();
+        assert!(ToolVersion::submit(&bundle, &p, sig.clone(), NOW).is_err(), "a suspended publisher submitted");
+        p.approve(None).unwrap();
         p.revoke_key(sig.key_id(), NOW + time::Duration::hours(1)).unwrap();
         assert!(ToolVersion::submit(&bundle, &p, sig, NOW + time::Duration::hours(2)).is_err(), "revoked key verified");
     }

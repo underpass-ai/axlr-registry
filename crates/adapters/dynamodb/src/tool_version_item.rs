@@ -178,13 +178,17 @@ pub(crate) mod tests {
 
     pub(crate) const NOW: registry_domain::Timestamp = datetime!(2026-10-17 10:00 UTC);
 
-    /// A publisher with one key and one token, and the signing key.
+    /// A publisher with one key, and the signing key.
     pub(crate) fn acme() -> (Publisher, SigningKey) {
         let key = SigningKey::from_bytes(&[1; 32]);
-        let mut p =
-            Publisher::register(PublisherId::parse("acme").unwrap(), key.verifying_key(), vec![Scope::parse("acme_*").unwrap()], NOW)
-                .unwrap();
-        p.issue_token(&"t".repeat(40), vec![Scope::parse("acme_*").unwrap()], None).unwrap();
+        let p = Publisher::register(
+            PublisherId::parse("acme").unwrap(),
+            key.verifying_key(),
+            vec![Scope::parse("acme_*").unwrap()],
+            registry_domain::Contact::parse("ops@acme.example").unwrap(),
+            NOW,
+        )
+        .unwrap();
         (p, key)
     }
 

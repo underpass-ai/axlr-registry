@@ -73,6 +73,7 @@ mod tests {
             PublisherId::parse("acme").unwrap(),
             key.verifying_key(),
             vec![Scope::parse("acme_*").unwrap()],
+            registry_domain::Contact::parse("ops@acme.example").unwrap(),
             datetime!(2026-10-17 12:00 UTC),
         )
         .unwrap();

@@ -83,6 +83,8 @@ Resources:
             - { AttributeName: GSI1PK, KeyType: HASH }
             - { AttributeName: GSI1SK, KeyType: RANGE }
           Projection: { ProjectionType: ALL }
+      # Idempotency records, used nonces and rate windows expire by themselves.
+      TimeToLiveSpecification: { AttributeName: expires_at, Enabled: true }
 
   Artifacts:
     Type: AWS::S3::Bucket

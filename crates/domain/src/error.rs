@@ -12,7 +12,7 @@ pub enum DomainError {
         /// The rule it broke.
         rule: String,
     },
-    /// The token, key or signature did not authorise the operation.
+    /// The key, signature or status did not authorise the operation.
     #[error("unauthorized: {0}")]
     Unauthorized(String),
     /// The operation does not fit the aggregate's state.

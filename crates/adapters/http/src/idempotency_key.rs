@@ -1,7 +1,7 @@
 //! `Idempotency-Key`: a retry of an upload gets the first answer again.
 
 use lambda_http::Request;
-use registry_domain::TokenDigest;
+use registry_domain::KeyId;
 
 use crate::HttpError;
 
@@ -23,17 +23,17 @@ impl IdempotencyKey {
         Ok(Some(Self(value.to_owned())))
     }
 
-    /// The store key: the token's digest and the caller's key, so one
+    /// The store key: the signing key's id and the caller's key, so one
     /// publisher never replays another's upload.
-    pub fn scoped(&self, token: &TokenDigest) -> String {
-        format!("{}#{}", token.as_str(), self.0)
+    pub fn scoped(&self, key: &KeyId) -> String {
+        format!("{}#{}", key.as_str(), self.0)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use lambda_http::{Body, Request};
-    use registry_domain::TokenDigest;
+    use registry_domain::KeyId;
 
     use super::IdempotencyKey;
 
@@ -47,8 +47,8 @@ mod tests {
     fn reads_and_scopes() {
         assert_eq!(IdempotencyKey::from_request(&Request::new(Body::Empty)).unwrap(), None);
         let key = IdempotencyKey::from_request(&with(" upload-42 ")).unwrap().unwrap();
-        let digest = TokenDigest::of("t");
-        assert_eq!(key.scoped(&digest), format!("{}#upload-42", digest.as_str()));
+        let signer = KeyId::parse("0123456789abcdef").unwrap();
+        assert_eq!(key.scoped(&signer), "0123456789abcdef#upload-42");
         assert!(IdempotencyKey::from_request(&with("   ")).is_err());
         assert!(IdempotencyKey::from_request(&with(&"k".repeat(129))).is_err());
         assert!(IdempotencyKey::from_request(&with("a b")).is_err());

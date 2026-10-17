@@ -1,12 +1,12 @@
 //! What a principal of the admin API may do.
 
-/// Admin roles. Publishers are not principals: they hold tokens.
+/// Admin roles. Publishers are not principals: they sign their requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     /// Approves, rejects and yanks versions.
     Reviewer,
-    /// Everything a reviewer does, plus publishers, keys, tokens and the index.
+    /// Everything a reviewer does, plus publishers, keys, rate limits and the index.
     Operator,
 }
 

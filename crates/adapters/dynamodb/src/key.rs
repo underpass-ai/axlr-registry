@@ -20,14 +20,20 @@ impl Key {
         Self { pk: format!("PUB#{}", id.as_str()), sk: format!("KEY#{key_id}") }
     }
 
-    /// `PUB#<id>` / `TOKEN#<digest>`.
-    pub(crate) fn token(id: &PublisherId, digest: &str) -> Self {
-        Self { pk: format!("PUB#{}", id.as_str()), sk: format!("TOKEN#{digest}") }
+    /// `KEYID#<key id>` / `META`: the lookup by key id.
+    pub(crate) fn key_pointer(key_id: &str) -> Self {
+        Self { pk: format!("KEYID#{key_id}"), sk: "META".into() }
     }
 
-    /// `TOKEN#<digest>` / `META`: the lookup by digest.
-    pub(crate) fn token_pointer(digest: &str) -> Self {
-        Self { pk: format!("TOKEN#{digest}"), sk: "META".into() }
+    /// `NONCE#<key id>#<nonce>` / `META`: a used nonce, until its TTL.
+    pub(crate) fn nonce(key_id: &str, nonce: &str) -> Self {
+        Self { pk: format!("NONCE#{key_id}#{nonce}"), sk: "META".into() }
+    }
+
+    /// `RATE#<subject>#<window>` / `META`: a rate window's counter, until
+    /// its TTL. The subject is a key id or `ip:<address>`.
+    pub(crate) fn rate(subject: &str, window: &str) -> Self {
+        Self { pk: format!("RATE#{subject}#{window}"), sk: "META".into() }
     }
 
     /// `TOOL#<name>` / `META`.
@@ -73,8 +79,10 @@ mod tests {
         let name = ToolName::parse("acme_count").unwrap();
         assert_eq!(Key::publisher(&acme).pk, "PUB#acme");
         assert_eq!(Key::publisher_key(&acme, "0123456789abcdef").sk, "KEY#0123456789abcdef");
-        assert_eq!(Key::token(&acme, "d").sk, "TOKEN#d");
-        assert_eq!(Key::token_pointer("d").pk, "TOKEN#d");
+        assert_eq!(Key::key_pointer("0123456789abcdef").pk, "KEYID#0123456789abcdef");
+        assert_eq!(Key::nonce("0123456789abcdef", "AAAA").pk, "NONCE#0123456789abcdef#AAAA");
+        assert_eq!(Key::rate("0123456789abcdef", "minute#2026-10-17T12:05").pk, "RATE#0123456789abcdef#minute#2026-10-17T12:05");
+        assert_eq!(Key::rate("ip:10.0.0.1", "hour#2026-10-17T12").pk, "RATE#ip:10.0.0.1#hour#2026-10-17T12");
         assert_eq!(Key::tool(&name).pk, "TOOL#acme_count");
         assert_eq!(Key::tool_version(&name, &Version::parse("1.2.3").unwrap()).sk, "VER#1.2.3");
         assert_eq!(Key::audit("2026-10", "t", "u"), Key { pk: "AUDIT#2026-10".into(), sk: "t#u".into() });

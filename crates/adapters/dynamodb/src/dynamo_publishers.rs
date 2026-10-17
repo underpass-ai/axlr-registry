@@ -1,22 +1,23 @@
-//! Publishers in DynamoDB: a META item under the lock, one item per key and
-//! per token, and a pointer item per token for the lookup by digest.
+//! Publishers in DynamoDB: a META item under the lock, one item per key,
+//! and a pointer item per key id for the lookup a signed request needs.
+//! A key that leaves the aggregate (a pending enrolment replaced by a new
+//! one) has its item and pointer deleted in the same transaction.
 
 use std::collections::BTreeMap;
 
-use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem};
+use aws_sdk_dynamodb::types::{AttributeValue, Delete, Put, TransactWriteItem};
 use registry_application::ports::PublisherRepository;
 use registry_application::ApplicationError;
-use registry_domain::{DomainError, Publisher, PublisherId, PublisherKey, Token, TokenDigest};
+use registry_domain::{DomainError, KeyId, Publisher, PublisherId, PublisherKey};
 
 use crate::item::Item;
 use crate::key::Key;
-use crate::publisher_item::PublisherItem;
+use crate::key_pointer_item::KeyPointerItem;
+use crate::publisher_item::{PublisherItem, PublisherMeta};
 use crate::publisher_key_item::PublisherKeyItem;
 use crate::sdk_error::{item_error, port_error, transaction_error};
 use crate::snapshots::Snapshots;
 use crate::table::Table;
-use crate::token_item::TokenItem;
-use crate::token_pointer_item::TokenPointerItem;
 
 /// The publisher repository.
 #[derive(Debug)]
@@ -35,26 +36,17 @@ impl DynamoPublishers {
     fn assemble(&self, items: Vec<Item>) -> Result<Option<(u64, Publisher)>, ApplicationError> {
         let mut meta = None;
         let mut keys = Vec::new();
-        let mut tokens = Vec::new();
         for item in &items {
             let sk = item.sort_key()?;
             if sk == "META" {
                 meta = Some(PublisherItem::decode(item)?);
             } else if sk.starts_with(PublisherKeyItem::PREFIX) {
                 keys.push(PublisherKeyItem::decode(item)?);
-            } else if sk.starts_with(TokenItem::PREFIX) {
-                tokens.push(TokenItem::decode(item)?);
             }
         }
-        let Some((id, namespaces, lock)) = meta else { return Ok(None) };
+        let Some((PublisherMeta { id, status, contact, namespaces, rate }, lock)) = meta else { return Ok(None) };
         keys.sort_by_key(|(position, _): &(u64, PublisherKey)| *position);
-        tokens.sort_by_key(|(position, _): &(u64, Token)| *position);
-        let publisher = Publisher::restore(
-            id.clone(),
-            namespaces,
-            keys.into_iter().map(|(_, k)| k).collect(),
-            tokens.into_iter().map(|(_, t)| t).collect(),
-        );
+        let publisher = Publisher::restore(id.clone(), status, contact, namespaces, keys.into_iter().map(|(_, k)| k).collect(), rate);
         self.snapshots.remember(id, lock, publisher.clone());
         Ok(Some((lock, publisher)))
     }
@@ -90,6 +82,40 @@ impl DynamoPublishers {
         }
         Ok(TransactWriteItem::builder().put(put.build().map_err(|e| port_error("dynamodb", e))?).build())
     }
+
+    fn delete(&self, key: Key) -> Result<TransactWriteItem, ApplicationError> {
+        let delete = Delete::builder()
+            .table_name(self.table.name())
+            .key("PK", AttributeValue::S(key.pk))
+            .key("SK", AttributeValue::S(key.sk))
+            .build()
+            .map_err(|e| port_error("dynamodb", e))?;
+        Ok(TransactWriteItem::builder().delete(delete).build())
+    }
+
+    /// The pointer item of a key, written when the key is new to the
+    /// aggregate; another publisher's pointer under the same key id fails
+    /// the transaction.
+    fn pointer(&self, publisher: &PublisherId, key: &PublisherKey) -> Result<TransactWriteItem, ApplicationError> {
+        let pointer = Put::builder()
+            .table_name(self.table.name())
+            .set_item(Some(KeyPointerItem::encode(key.id().as_str(), publisher).into_map()))
+            .condition_expression("attribute_not_exists(PK) OR publisher = :p")
+            .expression_attribute_values(":p", AttributeValue::S(publisher.as_str().to_owned()))
+            .build()
+            .map_err(|e| port_error("dynamodb", e))?;
+        Ok(TransactWriteItem::builder().put(pointer).build())
+    }
+
+    fn meta_of(publisher: &Publisher) -> PublisherMeta {
+        PublisherMeta {
+            id: publisher.id().clone(),
+            status: publisher.status(),
+            contact: publisher.contact().clone(),
+            namespaces: publisher.namespaces().to_vec(),
+            rate: *publisher.rate(),
+        }
+    }
 }
 
 impl PublisherRepository for DynamoPublishers {
@@ -97,20 +123,20 @@ impl PublisherRepository for DynamoPublishers {
         Ok(self.load(id).await?.map(|(_, p)| p))
     }
 
-    async fn find_by_token(&self, digest: &TokenDigest) -> Result<Option<Publisher>, ApplicationError> {
-        let key = Key::token_pointer(digest.as_str());
+    async fn find_by_key(&self, key: &KeyId) -> Result<Option<Publisher>, ApplicationError> {
+        let pointer = Key::key_pointer(key.as_str());
         let found = self
             .table
             .client()
             .get_item()
             .table_name(self.table.name())
-            .key("PK", AttributeValue::S(key.pk))
-            .key("SK", AttributeValue::S(key.sk))
+            .key("PK", AttributeValue::S(pointer.pk))
+            .key("SK", AttributeValue::S(pointer.sk))
             .send()
             .await
-            .map_err(|e| item_error("token lookup", e))?;
+            .map_err(|e| item_error("key lookup", e))?;
         let Some(item) = found.item else { return Ok(None) };
-        let id = TokenPointerItem::decode(&Item::from_map(item))?;
+        let id = KeyPointerItem::decode(&Item::from_map(item))?;
         self.find(&id).await
     }
 
@@ -155,7 +181,7 @@ impl PublisherRepository for DynamoPublishers {
         };
         let lock = expected + 1;
         let mut writes = Vec::new();
-        let meta = PublisherItem::encode(publisher.id(), publisher.namespaces(), lock);
+        let meta = PublisherItem::encode(&Self::meta_of(publisher), lock);
         writes.push(if new {
             self.put(meta, Some("attribute_not_exists(PK)"))?
         } else {
@@ -171,27 +197,17 @@ impl PublisherRepository for DynamoPublishers {
         });
         for (position, key) in publisher.keys().iter().enumerate() {
             match previous.as_ref().and_then(|p| p.keys().iter().find(|k| k.id() == key.id())) {
-                None => writes.push(self.put(PublisherKeyItem::encode(publisher.id(), key, position), Some("attribute_not_exists(PK)"))?),
+                None => {
+                    writes.push(self.put(PublisherKeyItem::encode(publisher.id(), key, position), Some("attribute_not_exists(PK)"))?);
+                    writes.push(self.pointer(publisher.id(), key)?);
+                }
                 Some(before) if before != key => writes.push(self.put(PublisherKeyItem::encode(publisher.id(), key, position), None)?),
                 Some(_) => {}
             }
         }
-        for (position, token) in publisher.tokens().iter().enumerate() {
-            match previous.as_ref().and_then(|p| p.tokens().iter().find(|t| t.digest() == token.digest())) {
-                None => {
-                    writes.push(self.put(TokenItem::encode(publisher.id(), token, position), Some("attribute_not_exists(PK)"))?);
-                    let pointer = Put::builder()
-                        .table_name(self.table.name())
-                        .set_item(Some(TokenPointerItem::encode(token.digest().as_str(), publisher.id()).into_map()))
-                        .condition_expression("attribute_not_exists(PK) OR publisher = :p")
-                        .expression_attribute_values(":p", AttributeValue::S(publisher.id().as_str().to_owned()))
-                        .build()
-                        .map_err(|e| port_error("dynamodb", e))?;
-                    writes.push(TransactWriteItem::builder().put(pointer).build());
-                }
-                Some(before) if before != token => writes.push(self.put(TokenItem::encode(publisher.id(), token, position), None)?),
-                Some(_) => {}
-            }
+        for gone in previous.iter().flat_map(|p| p.keys()).filter(|k| !publisher.keys().iter().any(|kept| kept.id() == k.id())) {
+            writes.push(self.delete(Key::publisher_key(publisher.id(), gone.id().as_str()))?);
+            writes.push(self.delete(Key::key_pointer(gone.id().as_str()))?);
         }
         self.table
             .client()

@@ -1,12 +1,13 @@
 //! An operator registers a publisher.
 
 use ed25519_dalek::VerifyingKey;
-use registry_domain::{Publisher, PublisherId, Scope};
+use registry_domain::{Contact, Publisher, PublisherId, Scope};
 
 use crate::ports::{AuditLog, Clock, PublisherRepository};
 use crate::{ApplicationError, AuditEntry, Principal};
 
-/// Registers a publisher with its first key and namespaces.
+/// Registers a publisher with its first key, namespaces and contact,
+/// active at once: the operator vouches for it, no approval step.
 pub struct RegisterPublisher<'a, P, L, C> {
     /// Publishers.
     pub publishers: &'a P,
@@ -24,12 +25,13 @@ impl<P: PublisherRepository, L: AuditLog, C: Clock> RegisterPublisher<'_, P, L, 
         id: PublisherId,
         key: VerifyingKey,
         namespaces: Vec<Scope>,
+        contact: Contact,
     ) -> Result<(), ApplicationError> {
         if !principal.role().may_operate() {
             return Err(ApplicationError::Forbidden("not an operator".into()));
         }
         let now = self.clock.now();
-        let publisher = Publisher::register(id.clone(), key, namespaces, now)?;
+        let publisher = Publisher::register(id.clone(), key, namespaces, contact, now)?;
         self.publishers.save(&publisher, true).await?;
         self.audit
             .record(AuditEntry {

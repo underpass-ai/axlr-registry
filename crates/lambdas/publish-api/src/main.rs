@@ -4,7 +4,7 @@
 
 use aws_config::BehaviorVersion;
 use lambda_http::{run, service_fn, Body, Error, Request, Response};
-use registry_dynamodb::{DynamoAudit, DynamoIdempotency, DynamoPublishers, DynamoTools, Table};
+use registry_dynamodb::{DynamoAudit, DynamoIdempotency, DynamoNonces, DynamoPublishers, DynamoRates, DynamoTools, Table};
 use registry_http::PublishApi;
 use registry_lambda::{Environment, FunctionName, LambdaTestScheduler, SystemClock};
 use registry_s3::{Bucket, S3Artifacts};
@@ -23,6 +23,8 @@ async fn handle(wiring: &Wiring, request: Request) -> Result<Response<Body>, Err
     let tools = DynamoTools::new(wiring.table.clone());
     let audit = DynamoAudit::new(wiring.table.clone());
     let idempotency = DynamoIdempotency::new(wiring.table.clone());
+    let nonces = DynamoNonces::new(wiring.table.clone());
+    let rates = DynamoRates::new(wiring.table.clone());
     let artifacts = S3Artifacts::new(wiring.bucket.clone());
     let api = PublishApi {
         publishers: &publishers,
@@ -32,6 +34,8 @@ async fn handle(wiring: &Wiring, request: Request) -> Result<Response<Body>, Err
         audit: &audit,
         clock: &SystemClock,
         idempotency: &idempotency,
+        nonces: &nonces,
+        rates: &rates,
     };
     Ok(api.handle(request).await)
 }

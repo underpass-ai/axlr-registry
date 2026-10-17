@@ -1,7 +1,7 @@
 //! The publisher API's routes.
 
 use lambda_http::http::Method;
-use registry_domain::{ToolName, Version};
+use registry_domain::{PublisherId, ToolName, Version};
 
 use crate::HttpError;
 
@@ -17,6 +17,10 @@ pub enum PublishRoute {
         /// The version.
         version: Version,
     },
+    /// `POST /v1/publishers/enroll`: signed with the key being enrolled.
+    Enroll,
+    /// `POST /v1/publishers/{id}/keys`: signed with one of the publisher's keys.
+    AddKey(PublisherId),
 }
 
 impl PublishRoute {
@@ -30,8 +34,18 @@ impl PublishRoute {
                 Ok(Self::Status { name: ToolName::parse(name)?, version: Version::parse(version)? })
             }
             (_, ["v1", "versions", _, _]) => Err(HttpError::MethodNotAllowed),
+            (&Method::POST, ["v1", "publishers", "enroll"]) => Ok(Self::Enroll),
+            (_, ["v1", "publishers", "enroll"]) => Err(HttpError::MethodNotAllowed),
+            (&Method::POST, ["v1", "publishers", id, "keys"]) => Ok(Self::AddKey(PublisherId::parse(id)?)),
+            (_, ["v1", "publishers", _, "keys"]) => Err(HttpError::MethodNotAllowed),
             _ => Err(HttpError::NotFound),
         }
+    }
+
+    /// Whether the route is the enrolment, signed with a key the registry
+    /// does not know yet.
+    pub fn is_enrolment(&self) -> bool {
+        matches!(self, Self::Enroll)
     }
 }
 
@@ -43,13 +57,20 @@ mod tests {
     use crate::HttpError;
 
     #[test]
-    fn resolves_the_two_routes() {
+    fn resolves_the_routes() {
         assert_eq!(PublishRoute::parse(&Method::POST, "/v1/versions").unwrap(), PublishRoute::Upload);
         assert!(matches!(PublishRoute::parse(&Method::GET, "/v1/versions/acme_count/1.0.0/").unwrap(), PublishRoute::Status { .. }));
+        assert!(PublishRoute::parse(&Method::POST, "/v1/publishers/enroll").unwrap().is_enrolment());
+        assert!(matches!(PublishRoute::parse(&Method::POST, "/v1/publishers/acme/keys").unwrap(), PublishRoute::AddKey(_)));
+        assert!(!PublishRoute::parse(&Method::POST, "/v1/publishers/acme/keys").unwrap().is_enrolment());
         assert!(matches!(PublishRoute::parse(&Method::GET, "/v1/versions"), Err(HttpError::MethodNotAllowed)));
+        assert!(matches!(PublishRoute::parse(&Method::GET, "/v1/publishers/enroll"), Err(HttpError::MethodNotAllowed)));
+        assert!(matches!(PublishRoute::parse(&Method::GET, "/v1/publishers/acme/keys"), Err(HttpError::MethodNotAllowed)));
         assert!(matches!(PublishRoute::parse(&Method::DELETE, "/v1/versions/a_b/1.0.0"), Err(HttpError::MethodNotAllowed)));
         assert!(matches!(PublishRoute::parse(&Method::GET, "/v1/versions/Bad/1.0.0"), Err(HttpError::Application(_))));
         assert!(matches!(PublishRoute::parse(&Method::GET, "/v1/versions/a_b/1.0"), Err(HttpError::Application(_))));
+        assert!(matches!(PublishRoute::parse(&Method::POST, "/v1/publishers/Bad/keys"), Err(HttpError::Application(_))));
+        assert!(matches!(PublishRoute::parse(&Method::POST, "/v1/publishers"), Err(HttpError::NotFound)));
         assert!(matches!(PublishRoute::parse(&Method::GET, "/v2/versions"), Err(HttpError::NotFound)));
     }
 }

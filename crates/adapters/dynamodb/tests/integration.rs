@@ -9,17 +9,21 @@ use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_sdk_dynamodb::Client;
 use ed25519_dalek::SigningKey;
-use registry_application::ports::{AuditLog, IdempotencyStore, PrincipalRepository, PublisherRepository, ToolRepository};
-use registry_application::{ApplicationError, AuditEntry, IdempotentResponse, Principal, Role};
-use registry_domain::{
-    Bundle, FileName, PolicyScan, Publisher, PublisherId, PublisherSignature, ReviewerId, Scope, Status, TestReport, TokenDigest, Tool,
-    ToolName, ToolVersion, Version,
+use registry_application::ports::{
+    AuditLog, IdempotencyStore, NonceStore, PrincipalRepository, PublisherRepository, RateCounter, ToolRepository,
 };
-use registry_dynamodb::{DynamoAudit, DynamoIdempotency, DynamoPrincipals, DynamoPublishers, DynamoTools, Table};
+use registry_application::use_cases::NONCE_TTL;
+use registry_application::{ApplicationError, AuditEntry, IdempotentResponse, Principal, RateSubject, Role};
+use registry_domain::{
+    Bundle, Contact, FileName, KeyId, Nonce, PolicyScan, Publisher, PublisherId, PublisherSignature, PublisherStatus, RateLimit,
+    RateOverrides, RateWindow, ReviewerId, Scope, Status, TestReport, Tool, ToolName, ToolVersion, Version,
+};
+use registry_dynamodb::{
+    DynamoAudit, DynamoIdempotency, DynamoNonces, DynamoPrincipals, DynamoPublishers, DynamoRates, DynamoTools, Table,
+};
 use time::macros::datetime;
 
 const NOW: registry_domain::Timestamp = datetime!(2026-10-17 12:00 UTC);
-const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef";
 
 async fn table() -> Table {
     let endpoint = std::env::var("DYNAMODB_ENDPOINT").unwrap_or_else(|_| "http://localhost:8000".into());
@@ -35,11 +39,20 @@ async fn table() -> Table {
     table
 }
 
+fn contact() -> Contact {
+    Contact::parse("ops@acme.example").unwrap()
+}
+
 fn acme() -> (Publisher, SigningKey) {
     let key = SigningKey::from_bytes(&[7; 32]);
-    let mut p =
-        Publisher::register(PublisherId::parse("acme").unwrap(), key.verifying_key(), vec![Scope::parse("acme_*").unwrap()], NOW).unwrap();
-    p.issue_token(TOKEN, vec![Scope::parse("acme_*").unwrap()], Some(NOW + time::Duration::days(30))).unwrap();
+    let p = Publisher::register(
+        PublisherId::parse("acme").unwrap(),
+        key.verifying_key(),
+        vec![Scope::parse("acme_*").unwrap()],
+        contact(),
+        NOW,
+    )
+    .unwrap();
     (p, key)
 }
 
@@ -58,62 +71,99 @@ fn version(p: &Publisher, key: &SigningKey, number: &str, code: &str) -> ToolVer
 
 #[tokio::test]
 #[ignore = "needs DynamoDB Local"]
-async fn publishers_round_trip_with_name_ownership_and_optimistic_locking() {
+async fn publishers_round_trip_with_key_lookup_and_optimistic_locking() {
     let table = table().await;
     let repo = DynamoPublishers::new(table.clone());
     let (mut acme, key) = acme();
+    let key_id = KeyId::of(&key.verifying_key());
     repo.save(&acme, true).await.unwrap();
     assert!(matches!(repo.save(&acme, true).await, Err(ApplicationError::Domain(_))), "the id was registered twice");
     assert_eq!(repo.find(acme.id()).await.unwrap().unwrap(), acme);
-    assert_eq!(repo.find_by_token(&TokenDigest::of(TOKEN)).await.unwrap().unwrap(), acme);
-    assert!(repo.find_by_token(&TokenDigest::of("nope")).await.unwrap().is_none());
+    assert_eq!(repo.find_by_key(&key_id).await.unwrap().unwrap(), acme);
+    assert!(repo.find_by_key(&KeyId::parse("0000000000000000").unwrap()).await.unwrap().is_none());
     assert!(repo.find(&PublisherId::parse("ghost").unwrap()).await.unwrap().is_none());
 
-    // A change through the same repository: new key, revoked token, saved under the lock.
-    let second = acme.add_key(SigningKey::from_bytes(&[8; 32]).verifying_key(), NOW).unwrap();
-    acme.revoke_token(&TokenDigest::of(TOKEN), NOW).unwrap();
+    // A change through the same repository: new key, suspended, a rate override, saved under the lock.
+    let second_key = SigningKey::from_bytes(&[8; 32]);
+    let second = acme.add_key(second_key.verifying_key(), NOW).unwrap();
+    acme.suspend().unwrap();
+    acme.set_rate(RateOverrides { requests_per_minute: Some(RateLimit::parse(5).unwrap()), uploads_per_day: None });
     repo.save(&acme, false).await.unwrap();
     let stored = repo.find(acme.id()).await.unwrap().unwrap();
     assert_eq!(stored, acme);
+    assert_eq!(stored.status(), PublisherStatus::Suspended);
+    assert_eq!(stored.rate().requests_per_minute().max(), 5);
     assert!(stored.active_key(&second, NOW).is_some());
-    assert!(stored.authorize(&TokenDigest::of(TOKEN), &ToolName::parse("acme_count").unwrap(), NOW).is_err(), "revoked token works");
+    assert_eq!(repo.find_by_key(&second).await.unwrap().unwrap().id(), acme.id(), "the new key has no pointer");
+
+    // Another publisher cannot claim a key id acme holds.
+    let thief = Publisher::register(
+        PublisherId::parse("thief").unwrap(),
+        second_key.verifying_key(),
+        vec![Scope::parse("thief_*").unwrap()],
+        contact(),
+        NOW,
+    )
+    .unwrap();
+    assert!(matches!(repo.save(&thief, true).await, Err(ApplicationError::Domain(_))), "a key id was registered to two publishers");
+    assert!(repo.find(thief.id()).await.unwrap().is_none(), "the refused transaction wrote something");
 
     // Another invocation that read before the change is refused.
     let stale = DynamoPublishers::new(table.clone());
     let mut before = stale.find(acme.id()).await.unwrap().unwrap();
-    acme.revoke_key(&registry_domain::KeyId::of(&key.verifying_key()), NOW).unwrap();
+    acme.revoke_key(&key_id, NOW).unwrap();
     repo.save(&acme, false).await.unwrap();
-    before.issue_token(&"x".repeat(40), vec![Scope::parse("acme_*").unwrap()], None).unwrap();
+    before.approve(None).unwrap();
     assert!(matches!(stale.save(&before, false).await, Err(ApplicationError::Domain(_))), "a stale write won");
     assert_eq!(stale.find(acme.id()).await.unwrap().unwrap(), acme, "the stale write changed something");
 
     // A repository with no snapshot reads the lock before writing.
     let fresh = DynamoPublishers::new(table.clone());
-    acme.issue_token(&"y".repeat(40), vec![Scope::parse("acme_*").unwrap()], None).unwrap();
+    acme.approve(None).unwrap();
     fresh.save(&acme, false).await.unwrap();
-    assert_eq!(fresh.find_by_token(&TokenDigest::of(&"y".repeat(40))).await.unwrap().unwrap(), acme);
+    assert_eq!(fresh.find_by_key(&key_id).await.unwrap().unwrap().status(), PublisherStatus::Active);
     assert!(matches!(
         fresh
             .save(
-                &Publisher::register(PublisherId::parse("ghost").unwrap(), key.verifying_key(), vec![Scope::parse("g_*").unwrap()], NOW)
-                    .unwrap(),
+                &Publisher::register(
+                    PublisherId::parse("ghost").unwrap(),
+                    SigningKey::from_bytes(&[3; 32]).verifying_key(),
+                    vec![Scope::parse("g_*").unwrap()],
+                    contact(),
+                    NOW
+                )
+                .unwrap(),
                 false
             )
             .await,
         Err(ApplicationError::Domain(_))
     ));
 
+    // A pending enrolment replaced by one with another key: the old key item and pointer go.
+    let beta = PublisherId::parse("beta").unwrap();
+    let first = SigningKey::from_bytes(&[11; 32]);
+    let replacement = SigningKey::from_bytes(&[12; 32]);
+    let pending = Publisher::enroll(beta.clone(), first.verifying_key(), vec![Scope::parse("beta_*").unwrap()], contact(), NOW).unwrap();
+    repo.save(&pending, true).await.unwrap();
+    let replaced =
+        Publisher::enroll(beta.clone(), replacement.verifying_key(), vec![Scope::parse("beta_*").unwrap()], contact(), NOW).unwrap();
+    repo.save(&replaced, false).await.unwrap();
+    assert_eq!(repo.find(&beta).await.unwrap().unwrap(), replaced, "the replaced key was read back");
+    assert!(repo.find_by_key(&KeyId::of(&first.verifying_key())).await.unwrap().is_none(), "the replaced key still resolves");
+    assert_eq!(repo.find_by_key(&KeyId::of(&replacement.verifying_key())).await.unwrap().unwrap().id(), &beta);
+
     let other = Publisher::register(
         PublisherId::parse("other").unwrap(),
         SigningKey::from_bytes(&[9; 32]).verifying_key(),
         vec![Scope::parse("other_*").unwrap()],
+        contact(),
         NOW,
     )
     .unwrap();
     repo.save(&other, true).await.unwrap();
     let mut all = repo.all().await.unwrap();
     all.sort_by(|a, b| a.id().cmp(b.id()));
-    assert_eq!(all, vec![acme, other]);
+    assert_eq!(all, vec![acme, replaced, other]);
 }
 
 #[tokio::test]
@@ -217,4 +267,69 @@ async fn idempotency_keys_are_first_writer_wins() {
     let second = IdempotentResponse { status: 409, body: "{}".into() };
     assert!(matches!(store.record("k", &second).await, Err(ApplicationError::Domain(_))));
     assert_eq!(store.find("k").await.unwrap(), Some(first));
+}
+
+#[tokio::test]
+#[ignore = "needs DynamoDB Local"]
+async fn nonces_record_once_until_they_expire() {
+    let table = table().await;
+    let store = DynamoNonces::new(table.clone());
+    let key = KeyId::parse("0123456789abcdef").unwrap();
+    let nonce = Nonce::from_bytes([1; 16]);
+    assert!(store.record_once(&key, &nonce, NOW + NONCE_TTL).await.unwrap());
+    assert!(!store.record_once(&key, &nonce, NOW + NONCE_TTL).await.unwrap(), "the same nonce was recorded twice");
+    assert!(!store.record_once(&key, &nonce, NOW + NONCE_TTL + time::Duration::minutes(9)).await.unwrap(), "live before its expiry");
+    assert!(store.record_once(&KeyId::parse("fedcba9876543210").unwrap(), &nonce, NOW + NONCE_TTL).await.unwrap(), "nonces are per key");
+    assert!(store.record_once(&key, &Nonce::from_bytes([2; 16]), NOW + NONCE_TTL).await.unwrap());
+    // DynamoDB Local never deletes by TTL; an expired record is overwritten by the next writer.
+    assert!(store.record_once(&key, &nonce, NOW + NONCE_TTL + NONCE_TTL).await.unwrap(), "an expired nonce was still refused");
+    let item = table
+        .client()
+        .get_item()
+        .table_name(table.name())
+        .key("PK", AttributeValue::S(format!("NONCE#{}#{}", key.as_str(), nonce.to_base64())))
+        .key("SK", AttributeValue::S("META".into()))
+        .send()
+        .await
+        .unwrap()
+        .item
+        .unwrap();
+    assert_eq!(item["expires_at"].as_n().unwrap(), &(NOW + NONCE_TTL + NONCE_TTL).unix_timestamp().to_string(), "no TTL attribute");
+}
+
+#[tokio::test]
+#[ignore = "needs DynamoDB Local"]
+async fn rate_windows_count_atomically_and_carry_their_expiry() {
+    let table = table().await;
+    let rates = DynamoRates::new(table.clone());
+    let key = RateSubject::Key(KeyId::parse("0123456789abcdef").unwrap());
+    let ip = RateSubject::Address("203.0.113.7".parse().unwrap());
+    assert_eq!(rates.increment(&key, RateWindow::Minute, NOW).await.unwrap(), 1);
+    assert_eq!(rates.increment(&key, RateWindow::Minute, NOW + time::Duration::seconds(30)).await.unwrap(), 2);
+    assert_eq!(rates.increment(&key, RateWindow::Day, NOW).await.unwrap(), 1, "windows are counted apart");
+    assert_eq!(rates.increment(&key, RateWindow::Minute, NOW + time::Duration::seconds(60)).await.unwrap(), 1, "the next minute");
+    assert_eq!(rates.increment(&ip, RateWindow::Hour, NOW).await.unwrap(), 1, "subjects are counted apart");
+    // Concurrent increments never lose a count.
+    let (a, b, c) = tokio::join!(
+        rates.increment(&ip, RateWindow::Hour, NOW),
+        rates.increment(&ip, RateWindow::Hour, NOW),
+        rates.increment(&ip, RateWindow::Hour, NOW)
+    );
+    let mut counts = vec![a.unwrap(), b.unwrap(), c.unwrap()];
+    counts.sort_unstable();
+    assert_eq!(counts, [2, 3, 4]);
+    let item = table
+        .client()
+        .get_item()
+        .table_name(table.name())
+        .key("PK", AttributeValue::S("RATE#ip:203.0.113.7#hour#2026-10-17T12".into()))
+        .key("SK", AttributeValue::S("META".into()))
+        .send()
+        .await
+        .unwrap()
+        .item
+        .unwrap();
+    assert_eq!(item["count"].as_n().unwrap(), "4");
+    assert_eq!(item["kind"].as_s().unwrap(), "rate");
+    assert_eq!(item["expires_at"].as_n().unwrap(), &datetime!(2026-10-17 13:05 UTC).unix_timestamp().to_string(), "no TTL attribute");
 }

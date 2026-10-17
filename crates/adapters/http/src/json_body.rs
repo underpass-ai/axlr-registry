@@ -25,6 +25,15 @@ impl JsonBody {
         }
         serde_json::from_slice(bytes).map_err(|e| HttpError::BadRequest(format!("body: {e}")))
     }
+
+    /// The body as `T`, or `T::default()` when there is no body at all.
+    pub fn parse_or_default<T: DeserializeOwned + Default>(request: &Request) -> Result<T, HttpError> {
+        if request.body().as_ref().is_empty() {
+            Ok(T::default())
+        } else {
+            Self::parse(request)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -34,7 +43,7 @@ mod tests {
     use super::{JsonBody, MAX_BODY_BYTES};
     use crate::HttpError;
 
-    #[derive(serde::Deserialize)]
+    #[derive(serde::Deserialize, Default)]
     #[serde(deny_unknown_fields)]
     struct Probe {
         n: u8,
@@ -53,5 +62,8 @@ mod tests {
         assert!(matches!(JsonBody::parse::<Probe>(&request(Body::Text("not json".into()))), Err(HttpError::BadRequest(_))));
         let huge = Body::Binary(vec![b' '; MAX_BODY_BYTES + 1]);
         assert!(matches!(JsonBody::parse::<Probe>(&request(huge)), Err(HttpError::PayloadTooLarge(_))));
+        assert_eq!(JsonBody::parse_or_default::<Probe>(&request(Body::Empty)).unwrap().n, 0);
+        assert_eq!(JsonBody::parse_or_default::<Probe>(&request(Body::Text("{\"n\":3}".into()))).unwrap().n, 3);
+        assert!(JsonBody::parse_or_default::<Probe>(&request(Body::Text("nope".into()))).is_err());
     }
 }

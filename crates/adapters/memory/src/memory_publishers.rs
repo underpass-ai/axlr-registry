@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use registry_application::ports::PublisherRepository;
 use registry_application::ApplicationError;
-use registry_domain::{Publisher, PublisherId, TokenDigest};
+use registry_domain::{KeyId, Publisher, PublisherId};
 
 /// An in-memory publisher repository.
 #[derive(Default)]
@@ -16,8 +16,8 @@ impl PublisherRepository for MemoryPublishers {
         Ok(self.0.lock().expect("lock").get(id).cloned())
     }
 
-    async fn find_by_token(&self, digest: &TokenDigest) -> Result<Option<Publisher>, ApplicationError> {
-        Ok(self.0.lock().expect("lock").values().find(|p| p.tokens().iter().any(|t| t.digest() == digest)).cloned())
+    async fn find_by_key(&self, key: &KeyId) -> Result<Option<Publisher>, ApplicationError> {
+        Ok(self.0.lock().expect("lock").values().find(|p| p.keys().iter().any(|k| k.id() == key)).cloned())
     }
 
     async fn all(&self) -> Result<Vec<Publisher>, ApplicationError> {

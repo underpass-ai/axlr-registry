@@ -77,18 +77,16 @@ mod tests {
     use std::collections::BTreeMap;
 
     use ed25519_dalek::SigningKey;
-    use registry_application::ports::{ArtifactStore as _, Clock as _};
-    use registry_application::use_cases::{IssueToken, RegisterPublisher, SubmitVersion};
+    use registry_application::ports::{ArtifactStore as _, Clock as _, PublisherRepository as _};
+    use registry_application::use_cases::{RegisterPublisher, SubmitVersion};
     use registry_application::{ApplicationError, Principal, Role};
-    use registry_domain::{Bundle, FileName, PublisherId, PublisherSignature, ReviewerId, Scope, Status, ToolName, Version};
+    use registry_domain::{Bundle, Contact, FileName, PublisherId, PublisherSignature, ReviewerId, Scope, Status, ToolName, Version};
     use registry_memory::{FixedClock, MemoryArtifacts, MemoryAudit, MemoryPublishers, MemoryTools, RecordingScheduler};
     use time::macros::datetime;
 
     use super::RunVersion;
     use crate::suite_runner::tests::{COUNT, SUITE};
     use crate::Limits;
-
-    const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef";
 
     struct World {
         publishers: MemoryPublishers,
@@ -112,13 +110,10 @@ mod tests {
         let ops = Principal::new(ReviewerId::parse("ops").unwrap(), Role::Operator);
         let scope = || vec![Scope::parse("acme_*").unwrap()];
         RegisterPublisher { publishers: &w.publishers, audit: &w.audit, clock: &w.clock }
-            .execute(&ops, PublisherId::parse("acme").unwrap(), key.verifying_key(), scope())
+            .execute(&ops, PublisherId::parse("acme").unwrap(), key.verifying_key(), scope(), Contact::parse("ops@acme.example").unwrap())
             .await
             .unwrap();
-        IssueToken { publishers: &w.publishers, audit: &w.audit, clock: &w.clock }
-            .execute(&ops, &PublisherId::parse("acme").unwrap(), TOKEN, scope(), None)
-            .await
-            .unwrap();
+        let acme = w.publishers.find(&PublisherId::parse("acme").unwrap()).await.unwrap().unwrap();
         let manifest = serde_json::json!({
             "name": "acme_count", "description": "Count items.", "input_schema": {"type": "object"}, "program": "python3",
             "args": ["count.py"], "files": ["count.py"], "catalog": {"version": "1.0.0", "category": "data", "license": "MIT"}
@@ -128,17 +123,10 @@ mod tests {
         let files: BTreeMap<FileName, Vec<u8>> = [(FileName::parse("count.py").unwrap(), COUNT.as_bytes().to_vec())].into();
         let bundle = Bundle::new(manifest, files);
         let digest = bundle.clone().validate().unwrap().bundle_digest().clone();
-        let outcome = SubmitVersion {
-            publishers: &w.publishers,
-            tools: &w.tools,
-            artifacts: &w.artifacts,
-            tests: &w.scheduler,
-            audit: &w.audit,
-            clock: &w.clock,
-        }
-        .execute(TOKEN, bundle, PublisherSignature::sign(&key, &digest), tests)
-        .await
-        .unwrap();
+        let outcome = SubmitVersion { tools: &w.tools, artifacts: &w.artifacts, tests: &w.scheduler, audit: &w.audit, clock: &w.clock }
+            .execute(&acme, bundle, PublisherSignature::sign(&key, &digest), tests)
+            .await
+            .unwrap();
         assert_eq!(outcome.status, Status::Scanned);
         w
     }

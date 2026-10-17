@@ -86,6 +86,7 @@ mod tests {
             registry_domain::PublisherId::parse("acme").unwrap(),
             key.verifying_key(),
             vec![registry_domain::Scope::parse("acme_*").unwrap()],
+            registry_domain::Contact::parse("ops@acme.example").unwrap(),
             time::macros::datetime!(2026-10-17 12:00 UTC),
         )
         .unwrap();

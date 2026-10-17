@@ -1,13 +1,15 @@
 //! Every way a request fails, and the status each maps to.
 
-use lambda_http::http::StatusCode;
+use lambda_http::http::{header, StatusCode};
 use lambda_http::{Body, Response};
-use registry_application::ApplicationError;
+use registry_application::{ApplicationError, AuthenticationFailure};
 use registry_domain::DomainError;
 
 /// A request failure. Application errors map as: domain `Invalid` 400,
 /// `Unauthorized` 401, `Conflict` 409; `NotFound` 404; `Forbidden` 403;
-/// `Port` 502.
+/// `Port` 502. Authentication failures: `Stale`, `UnknownKey`,
+/// `BadSignature` and `Replay` 401; `Pending` and `Suspended` 403;
+/// `RateLimited` 429 with `Retry-After`.
 #[derive(Debug, thiserror::Error)]
 pub enum HttpError {
     /// The body is over the limit.
@@ -28,6 +30,18 @@ pub enum HttpError {
     /// A use case refused or failed.
     #[error(transparent)]
     Application(#[from] ApplicationError),
+    /// The signed request was refused.
+    #[error(transparent)]
+    Authentication(AuthenticationFailure),
+}
+
+impl From<AuthenticationFailure> for HttpError {
+    fn from(failure: AuthenticationFailure) -> Self {
+        match failure {
+            AuthenticationFailure::Port(error) => Self::Application(error),
+            other => Self::Authentication(other),
+        }
+    }
 }
 
 impl From<DomainError> for HttpError {
@@ -58,26 +72,40 @@ impl HttpError {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::Application(e) => Self::status_of(e),
+            Self::Authentication(f) => match f {
+                AuthenticationFailure::Pending | AuthenticationFailure::Suspended => StatusCode::FORBIDDEN,
+                AuthenticationFailure::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
+                _ => StatusCode::UNAUTHORIZED,
+            },
         }
     }
 
-    /// The response: the status and a JSON body `{"error": "..."}`. A port
-    /// failure's detail stays in the logs; the caller sees only that a
-    /// backend failed.
+    /// The response: the status and a JSON body `{"error": "..."}`, with
+    /// `"code"` for an authentication failure (`stale`, `pending`,
+    /// `suspended`, `replay`…) and `Retry-After` on a 429. A port failure's
+    /// detail stays in the logs; the caller sees only that a backend failed.
     pub fn into_response(self) -> Response<Body> {
         let message = match &self {
             Self::Application(ApplicationError::Port { port, .. }) => format!("backend {port} failed"),
             other => other.to_string(),
         };
-        crate::JsonResponse::json(self.status(), &serde_json::json!({ "error": message }))
+        let code = match &self {
+            Self::Authentication(failure) => Some(failure.code().to_owned()),
+            _ => None,
+        };
+        let mut response = crate::JsonResponse::json(self.status(), &crate::ErrorBody { error: message, code });
+        if let Self::Authentication(AuthenticationFailure::RateLimited { retry_after, .. }) = &self {
+            response.headers_mut().insert(header::RETRY_AFTER, retry_after.to_string().parse().expect("digits are a header value"));
+        }
+        response
     }
 }
 
 #[cfg(test)]
 mod tests {
     use lambda_http::http::StatusCode;
-    use registry_application::ApplicationError;
-    use registry_domain::DomainError;
+    use registry_application::{ApplicationError, AuthenticationFailure};
+    use registry_domain::{DomainError, RateWindow};
 
     use super::HttpError;
 
@@ -95,6 +123,13 @@ mod tests {
             (HttpError::Unauthorized("no bearer".into()), StatusCode::UNAUTHORIZED),
             (HttpError::NotFound, StatusCode::NOT_FOUND),
             (HttpError::MethodNotAllowed, StatusCode::METHOD_NOT_ALLOWED),
+            (HttpError::from(AuthenticationFailure::Stale), StatusCode::UNAUTHORIZED),
+            (HttpError::from(AuthenticationFailure::UnknownKey), StatusCode::UNAUTHORIZED),
+            (HttpError::from(AuthenticationFailure::BadSignature), StatusCode::UNAUTHORIZED),
+            (HttpError::from(AuthenticationFailure::Replay), StatusCode::UNAUTHORIZED),
+            (HttpError::from(AuthenticationFailure::Pending), StatusCode::FORBIDDEN),
+            (HttpError::from(AuthenticationFailure::Suspended), StatusCode::FORBIDDEN),
+            (HttpError::from(AuthenticationFailure::Port(ApplicationError::port("dynamodb", "secret detail"))), StatusCode::BAD_GATEWAY),
         ];
         for (error, status) in cases {
             assert_eq!(error.status(), status, "{error}");
@@ -104,5 +139,15 @@ mod tests {
             assert!(body.starts_with("{\"error\":"), "{body}");
             assert!(!body.contains("secret detail"), "a port failure leaked its detail");
         }
+        let limited = HttpError::from(AuthenticationFailure::RateLimited { window: RateWindow::Minute, retry_after: 17 });
+        assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+        let response = limited.into_response();
+        assert_eq!(response.headers()["retry-after"], "17");
+        let body: serde_json::Value = serde_json::from_slice(response.body().as_ref()).unwrap();
+        assert_eq!(body["code"], "rate_limited");
+        let stale: serde_json::Value =
+            serde_json::from_slice(HttpError::from(AuthenticationFailure::Stale).into_response().body().as_ref()).unwrap();
+        assert_eq!(stale["code"], "stale");
+        assert!(stale["error"].as_str().unwrap().starts_with("stale"));
     }
 }

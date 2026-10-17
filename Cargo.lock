@@ -2359,7 +2359,6 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "lambda_http",
- "rand 0.8.8",
  "registry-application",
  "registry-domain",
  "registry-memory",

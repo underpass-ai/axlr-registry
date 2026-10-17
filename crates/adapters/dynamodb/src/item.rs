@@ -61,6 +61,13 @@ impl Item {
         self
     }
 
+    pub(crate) fn set_optional_number(self, name: &str, value: Option<u64>) -> Self {
+        match value {
+            Some(v) => self.set_number(name, v),
+            None => self,
+        }
+    }
+
     pub(crate) fn set_timestamp(self, name: &str, value: Timestamp) -> Self {
         self.set_string(name, format_timestamp(value))
     }
@@ -111,6 +118,14 @@ impl Item {
             .ok_or_else(|| ApplicationError::port("dynamodb", format!("attribute {name} is not a number")))
     }
 
+    pub(crate) fn optional_number(&self, name: &str) -> Result<Option<u64>, ApplicationError> {
+        if self.0.contains_key(name) {
+            self.number(name).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
     pub(crate) fn timestamp(&self, name: &str) -> Result<Timestamp, ApplicationError> {
         parse_timestamp(self.string(name)?)
     }
@@ -156,6 +171,8 @@ mod tests {
             .set_string("s", "v")
             .set_optional_string("absent", None::<String>)
             .set_number("n", 7)
+            .set_optional_number("on", Some(8))
+            .set_optional_number("none", None)
             .set_timestamp("t", at)
             .set_optional_timestamp("ot", Some(at))
             .set_strings("l", ["a".to_owned(), "b".to_owned()])
@@ -167,6 +184,9 @@ mod tests {
         assert_eq!(item.string("s").unwrap(), "v");
         assert_eq!(item.optional_string("absent"), None);
         assert_eq!(item.number("n").unwrap(), 7);
+        assert_eq!(item.optional_number("on").unwrap(), Some(8));
+        assert_eq!(item.optional_number("none").unwrap(), None);
+        assert!(item.optional_number("s").is_err());
         assert_eq!(item.timestamp("t").unwrap(), at);
         assert_eq!(item.optional_timestamp("ot").unwrap(), Some(at));
         assert_eq!(item.optional_timestamp("absent").unwrap(), None);

@@ -1,23 +1,22 @@
 //! A publisher uploads a signed bundle.
 
-use registry_domain::{Bundle, DomainError, PolicyScan, PublisherSignature, Status, TokenDigest, Tool, ToolVersion};
+use registry_domain::{Bundle, DomainError, PolicyScan, Publisher, PublisherSignature, Status, Tool, ToolVersion};
 
-use crate::ports::{ArtifactStore, AuditLog, Clock, PublisherRepository, TestScheduler, ToolRepository};
+use crate::ports::{ArtifactStore, AuditLog, Clock, TestScheduler, ToolRepository};
 use crate::use_cases::SubmissionOutcome;
 use crate::{ApplicationError, AuditEntry};
 
 /// `tests.json` is at most this long.
 pub const MAX_TESTS_BYTES: usize = 256 * 1024;
 
-/// Authenticates the token, validates and scans the bundle, stores it in
+/// Takes the authenticated publisher, validates and scans the bundle
+/// (ownership and the bundle signature are checked by the domain), stores it in
 /// quarantine with its `tests.json` and schedules its tests. The tests
 /// travel beside the bundle, not inside it: they are the registry's
 /// evidence, not part of what the console installs or the publisher signs.
 /// A version without tests is accepted and stays unapprovable, which the
 /// reviewer sees in its report.
-pub struct SubmitVersion<'a, P, T, A, S, L, C> {
-    /// Publishers.
-    pub publishers: &'a P,
+pub struct SubmitVersion<'a, T, A, S, L, C> {
     /// Tools.
     pub tools: &'a T,
     /// Artifacts.
@@ -30,9 +29,8 @@ pub struct SubmitVersion<'a, P, T, A, S, L, C> {
     pub clock: &'a C,
 }
 
-impl<P, T, A, S, L, C> SubmitVersion<'_, P, T, A, S, L, C>
+impl<T, A, S, L, C> SubmitVersion<'_, T, A, S, L, C>
 where
-    P: PublisherRepository,
     T: ToolRepository,
     A: ArtifactStore,
     S: TestScheduler,
@@ -42,7 +40,7 @@ where
     /// Runs the command.
     pub async fn execute(
         &self,
-        token: &str,
+        publisher: &Publisher,
         bundle: Bundle,
         signature: PublisherSignature,
         tests: Option<&[u8]>,
@@ -51,11 +49,8 @@ where
         if tests.is_some_and(|t| t.is_empty() || t.len() > MAX_TESTS_BYTES || t.contains(&0)) {
             return Err(DomainError::Invalid { what: "tests", rule: "text, 1 byte to 256 KiB".to_owned() }.into());
         }
-        let digest = TokenDigest::of(token);
-        let publisher = self.publishers.find_by_token(&digest).await?.ok_or_else(|| ApplicationError::Forbidden("unknown token".into()))?;
         let bundle = bundle.validate()?;
-        publisher.authorize(&digest, bundle.name(), now)?;
-        let mut version = ToolVersion::submit(&bundle, &publisher, signature, now)?;
+        let mut version = ToolVersion::submit(&bundle, publisher, signature, now)?;
         let scan = PolicyScan::run(&bundle);
         version.record_scan(scan.clone(), now)?;
         let (mut tool, new) = match self.tools.find(bundle.name()).await? {

@@ -10,8 +10,12 @@ use crate::HttpError;
 pub enum AdminRoute {
     /// `/v1/publishers`.
     RegisterPublisher,
-    /// `/v1/publishers/{id}/tokens`.
-    IssueToken(PublisherId),
+    /// `/v1/publishers/{id}/approve`.
+    ApprovePublisher(PublisherId),
+    /// `/v1/publishers/{id}/suspend`.
+    SuspendPublisher(PublisherId),
+    /// `/v1/publishers/{id}/rate`.
+    SetRate(PublisherId),
     /// `/v1/publishers/{id}/keys/{key_id}/revoke`.
     RevokeKey(PublisherId, KeyId),
     /// `/v1/versions/{name}/{version}/approve`.
@@ -42,7 +46,7 @@ impl AdminRoute {
                 ["v1", "versions", name, version] => Self::ShowVersion(ToolName::parse(name)?, Version::parse(version)?),
                 ["v1", "index", "staging"] => Self::StagingIndex,
                 ["v1", "publishers"]
-                | ["v1", "publishers", _, "tokens"]
+                | ["v1", "publishers", _, "approve" | "suspend" | "rate"]
                 | ["v1", "publishers", _, "keys", _, "revoke"]
                 | ["v1", "index", "publish" | "signature"] => return Err(HttpError::MethodNotAllowed),
                 ["v1", "versions", _, _, "approve" | "reject" | "yank"] => return Err(HttpError::MethodNotAllowed),
@@ -52,7 +56,9 @@ impl AdminRoute {
         }
         let route = match parts.as_slice() {
             ["v1", "publishers"] => Self::RegisterPublisher,
-            ["v1", "publishers", id, "tokens"] => Self::IssueToken(PublisherId::parse(id)?),
+            ["v1", "publishers", id, "approve"] => Self::ApprovePublisher(PublisherId::parse(id)?),
+            ["v1", "publishers", id, "suspend"] => Self::SuspendPublisher(PublisherId::parse(id)?),
+            ["v1", "publishers", id, "rate"] => Self::SetRate(PublisherId::parse(id)?),
             ["v1", "publishers", id, "keys", key, "revoke"] => Self::RevokeKey(PublisherId::parse(id)?, KeyId::parse(key)?),
             ["v1", "versions", name, version, action @ ("approve" | "reject" | "yank")] => {
                 let name = ToolName::parse(name)?;
@@ -98,7 +104,11 @@ mod tests {
         let post = |p: &str| AdminRoute::parse(&Method::POST, p, None);
         let get = |p: &str, q: Option<&str>| AdminRoute::parse(&Method::GET, p, q);
         assert_eq!(post("/v1/publishers").unwrap(), AdminRoute::RegisterPublisher);
-        assert!(matches!(post("/v1/publishers/acme/tokens").unwrap(), AdminRoute::IssueToken(_)));
+        assert!(matches!(post("/v1/publishers/acme/approve").unwrap(), AdminRoute::ApprovePublisher(_)));
+        assert!(matches!(post("/v1/publishers/acme/suspend").unwrap(), AdminRoute::SuspendPublisher(_)));
+        assert!(matches!(post("/v1/publishers/acme/rate").unwrap(), AdminRoute::SetRate(_)));
+        assert!(matches!(post("/v1/publishers/acme/tokens"), Err(HttpError::NotFound)));
+        assert!(matches!(get("/v1/publishers/acme/approve", None), Err(HttpError::MethodNotAllowed)));
         assert!(matches!(post("/v1/publishers/acme/keys/0123456789abcdef/revoke").unwrap(), AdminRoute::RevokeKey(..)));
         assert!(matches!(post("/v1/versions/acme_count/1.0.0/approve").unwrap(), AdminRoute::Approve(..)));
         assert!(matches!(post("/v1/versions/acme_count/1.0.0/reject").unwrap(), AdminRoute::Reject(..)));
@@ -106,7 +116,7 @@ mod tests {
         assert_eq!(post("/v1/index/publish").unwrap(), AdminRoute::PublishIndex);
         assert_eq!(post("/v1/index/signature").unwrap(), AdminRoute::IndexSignature);
         assert!(matches!(post("/v1/versions/acme_count/1.0.0/bless"), Err(HttpError::NotFound)));
-        assert!(matches!(post("/v1/publishers/Acme/tokens"), Err(HttpError::Application(_))));
+        assert!(matches!(post("/v1/publishers/Acme/approve"), Err(HttpError::Application(_))));
         assert!(matches!(post("/v1/publishers/acme/keys/short/revoke"), Err(HttpError::Application(_))));
         assert!(matches!(get("/v1/publishers", None), Err(HttpError::MethodNotAllowed)));
         assert!(matches!(get("/nowhere", None), Err(HttpError::NotFound)));

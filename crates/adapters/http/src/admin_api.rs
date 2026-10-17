@@ -1,4 +1,4 @@
-//! `admin-api`: publishers, tokens, keys, review, yank and the index, behind
+//! `admin-api`: publishers, keys, rate limits, review, yank and the index, behind
 //! mTLS. The principal comes from the client certificate; the use cases
 //! decide what each role may do.
 
@@ -6,17 +6,16 @@ use lambda_http::http::StatusCode;
 use lambda_http::{Body, Request, Response};
 use registry_application::ports::{AuditLog, Clock, IndexTrigger, IndexWriter, PrincipalRepository, PublisherRepository, ToolRepository};
 use registry_application::use_cases::{
-    ApproveVersion, AuthenticatePrincipal, IssueToken, ListVersions, PublishSignedIndex, ReadStagingIndex, RegisterPublisher,
-    RejectVersion, RevokeKey, ShowVersion, YankVersion,
+    ApprovePublisher, ApproveVersion, AuthenticatePrincipal, ListVersions, PublishSignedIndex, ReadStagingIndex, RegisterPublisher,
+    RejectVersion, RevokeKey, SetPublisherRate, ShowVersion, SuspendPublisher, YankVersion,
 };
 use registry_application::{ApplicationError, Principal};
-use registry_domain::{RegistryPublicKey, Status, ToolName, Version};
-use time::format_description::well_known::Rfc3339;
+use registry_domain::{PublisherId, PublisherStatus, RegistryPublicKey, Status, ToolName, Version};
 
 use crate::{
-    AdminRoute, ClientCertificate, ClientGate, HttpError, IndexSignatureRequest, IssueTokenRequest, JsonBody, JsonResponse,
-    RegisterPublisherRequest, ReviewRequest, ReviewResponse, RevokeKeyRequest, RevokeKeyResponse, TokenGenerator, TokenResponse,
-    VersionStatusResponse,
+    AdminRoute, ApprovePublisherRequest, ClientCertificate, ClientGate, HttpError, IndexSignatureRequest, JsonBody, JsonResponse,
+    PublisherResponse, RateResponse, RegisterPublisherRequest, ReviewRequest, ReviewResponse, RevokeKeyRequest, RevokeKeyResponse,
+    SetRateRequest, VersionStatusResponse,
 };
 
 /// The admin API over its ports.
@@ -63,24 +62,33 @@ where
         let principal = AuthenticatePrincipal { principals: self.principals }.execute(certificate.sha256()).await?;
         match AdminRoute::parse(request.method(), request.uri().path(), request.uri().query())? {
             AdminRoute::RegisterPublisher => {
-                let (id, key, namespaces) = JsonBody::parse::<RegisterPublisherRequest>(&request)?.into_parts()?;
+                let (id, key, namespaces, contact) = JsonBody::parse::<RegisterPublisherRequest>(&request)?.into_parts()?;
                 RegisterPublisher { publishers: self.publishers, audit: self.audit, clock: self.clock }
-                    .execute(&principal, id.clone(), key, namespaces)
+                    .execute(&principal, id.clone(), key, namespaces.clone(), contact)
                     .await?;
-                Ok(JsonResponse::json(StatusCode::CREATED, &serde_json::json!({ "id": id.as_str() })))
+                Ok(JsonResponse::json(StatusCode::CREATED, &Self::publisher(&id, PublisherStatus::Active, namespaces)))
             }
-            AdminRoute::IssueToken(id) => {
-                let (scopes, expires_at) = JsonBody::parse::<IssueTokenRequest>(&request)?.into_parts()?;
-                let token = TokenGenerator::generate();
-                let digest = IssueToken { publishers: self.publishers, audit: self.audit, clock: self.clock }
-                    .execute(&principal, &id, &token, scopes, expires_at)
+            AdminRoute::ApprovePublisher(id) => {
+                let narrowed = JsonBody::parse_or_default::<ApprovePublisherRequest>(&request)?.into_namespaces()?;
+                let namespaces = ApprovePublisher { publishers: self.publishers, audit: self.audit, clock: self.clock }
+                    .execute(&principal, &id, narrowed)
                     .await?;
-                let response = TokenResponse {
-                    token,
-                    digest: digest.as_str().to_owned(),
-                    expires_at: expires_at.map(|t| t.format(&Rfc3339).expect("a timestamp formats")),
-                };
-                Ok(JsonResponse::json(StatusCode::CREATED, &response))
+                Ok(JsonResponse::json(StatusCode::OK, &Self::publisher(&id, PublisherStatus::Active, namespaces)))
+            }
+            AdminRoute::SuspendPublisher(id) => {
+                let reason = JsonBody::parse_or_default::<ReviewRequest>(&request)?.reason;
+                SuspendPublisher { publishers: self.publishers, audit: self.audit, clock: self.clock }
+                    .execute(&principal, &id, &reason)
+                    .await?;
+                let namespaces = self.publishers.find(&id).await?.map(|p| p.namespaces().to_vec()).unwrap_or_default();
+                Ok(JsonResponse::json(StatusCode::OK, &Self::publisher(&id, PublisherStatus::Suspended, namespaces)))
+            }
+            AdminRoute::SetRate(id) => {
+                let rate = JsonBody::parse::<SetRateRequest>(&request)?.into_overrides()?;
+                let in_force = SetPublisherRate { publishers: self.publishers, audit: self.audit, clock: self.clock }
+                    .execute(&principal, &id, rate)
+                    .await?;
+                Ok(JsonResponse::json(StatusCode::OK, &RateResponse::of(id.as_str(), &in_force)))
             }
             AdminRoute::RevokeKey(id, key) => {
                 let mode = JsonBody::parse::<RevokeKeyRequest>(&request)?.mode;
@@ -143,6 +151,10 @@ where
         }
     }
 
+    fn publisher(id: &PublisherId, status: PublisherStatus, namespaces: Vec<registry_domain::Scope>) -> PublisherResponse {
+        PublisherResponse { id: id.as_str().to_owned(), status, namespaces: namespaces.into_iter().map(String::from).collect() }
+    }
+
     fn operator_only(principal: &Principal) -> Result<(), HttpError> {
         if principal.role().may_operate() {
             Ok(())
@@ -174,9 +186,9 @@ mod tests {
     use lambda_http::http::{Method, StatusCode};
     use lambda_http::{Body, Request, RequestExt as _};
     use registry_application::ports::{Clock as _, PublisherRepository as _};
-    use registry_application::use_cases::{PublishIndex, RecordTestReport, SubmitVersion};
+    use registry_application::use_cases::{EnrollPublisher, PublishIndex, RecordTestReport, SubmitVersion};
     use registry_application::{Principal, Role};
-    use registry_domain::{PublisherId, ReviewerId, Status, TestReport, ToolName, Version};
+    use registry_domain::{Contact, PublisherId, PublisherStatus, ReviewerId, Scope, Status, TestReport, ToolName, Version};
     use registry_memory::{
         FixedClock, MemoryArtifacts, MemoryAudit, MemoryIndex, MemoryPrincipals, MemoryPublishers, MemoryTools, RecordingIndexTrigger,
         RecordingScheduler,
@@ -186,7 +198,7 @@ mod tests {
     use super::AdminApi;
     use crate::client_certificate::tests::{pem_of, request_with_certificate};
     use crate::upload_request::tests::signed_upload;
-    use crate::{ReviewResponse, RevokeKeyResponse, TokenResponse, VersionStatusResponse};
+    use crate::{PublisherResponse, RateResponse, ReviewResponse, RevokeKeyResponse, VersionStatusResponse};
 
     const OPS: &[u8] = b"operator certificate";
     const ANA: &[u8] = b"reviewer certificate";
@@ -260,33 +272,20 @@ mod tests {
     async fn registered(w: &World) {
         let api = api(w);
         let public_key = base64::engine::general_purpose::STANDARD.encode(w.publisher_key.verifying_key().as_bytes());
-        let body = serde_json::json!({ "id": "acme", "public_key": public_key, "namespaces": ["acme_*"] });
+        let body = serde_json::json!({ "id": "acme", "public_key": public_key, "namespaces": ["acme_*"], "contact": "ops@acme.example" });
         let response = api.handle(post(Some(OPS), "/v1/publishers", body)).await;
         assert_eq!(response.status(), StatusCode::CREATED, "{:?}", response.body());
+        let body: PublisherResponse = serde_json::from_slice(response.body().as_ref()).unwrap();
+        assert_eq!((body.id.as_str(), body.status), ("acme", PublisherStatus::Active));
     }
 
-    async fn issued(w: &World) -> String {
-        let response = api(w).handle(post(Some(OPS), "/v1/publishers/acme/tokens", serde_json::json!({ "scopes": ["acme_*"] }))).await;
-        assert_eq!(response.status(), StatusCode::CREATED, "{:?}", response.body());
-        let body: TokenResponse = serde_json::from_slice(response.body().as_ref()).unwrap();
-        assert_eq!(body.token.len(), 64);
-        assert!(body.expires_at.is_none());
-        body.token
-    }
-
-    async fn submitted(w: &World, token: &str, version: &str) {
+    async fn submitted(w: &World, version: &str) {
         let (bundle, signature, tests) = signed_upload(&w.publisher_key, version, "print(1)\n").into_submission().unwrap();
-        SubmitVersion {
-            publishers: &w.publishers,
-            tools: &w.tools,
-            artifacts: &w.artifacts,
-            tests: &w.scheduler,
-            audit: &w.audit,
-            clock: &w.clock,
-        }
-        .execute(token, bundle, signature, tests.as_deref())
-        .await
-        .unwrap();
+        let acme = w.publishers.find(&PublisherId::parse("acme").unwrap()).await.unwrap().unwrap();
+        SubmitVersion { tools: &w.tools, artifacts: &w.artifacts, tests: &w.scheduler, audit: &w.audit, clock: &w.clock }
+            .execute(&acme, bundle, signature, tests.as_deref())
+            .await
+            .unwrap();
         RecordTestReport { tools: &w.tools, audit: &w.audit }
             .execute(
                 &ToolName::parse("acme_count").unwrap(),
@@ -301,9 +300,8 @@ mod tests {
     async fn an_operator_runs_a_publisher_through_registration_review_and_the_signed_index() {
         let w = world();
         registered(&w).await;
-        let token = issued(&w).await;
-        submitted(&w, &token, "1.0.0").await;
-        submitted(&w, &token, "1.1.0").await;
+        submitted(&w, "1.0.0").await;
+        submitted(&w, "1.1.0").await;
         let api = api(&w);
 
         let approve = api.handle(post(Some(ANA), "/v1/versions/acme_count/1.0.0/approve", serde_json::json!({ "reason": "fine" }))).await;
@@ -354,6 +352,52 @@ mod tests {
         assert_eq!(not_operator.status(), StatusCode::FORBIDDEN);
     }
 
+    #[tokio::test]
+    async fn an_operator_approves_narrows_suspends_and_sets_the_rate_of_an_enrolled_publisher() {
+        let w = world();
+        let api = api(&w);
+        let beta = PublisherId::parse("beta").unwrap();
+        EnrollPublisher { publishers: &w.publishers, audit: &w.audit, clock: &w.clock }
+            .execute(
+                beta.clone(),
+                w.publisher_key.verifying_key(),
+                vec![Scope::parse("beta_*").unwrap(), Scope::parse("beta2_*").unwrap()],
+                Contact::parse("ops@beta.example").unwrap(),
+            )
+            .await
+            .unwrap();
+        let reviewer = api.handle(post(Some(ANA), "/v1/publishers/beta/approve", serde_json::json!({}))).await;
+        assert_eq!(reviewer.status(), StatusCode::FORBIDDEN);
+        let widened = api.handle(post(Some(OPS), "/v1/publishers/beta/approve", serde_json::json!({ "namespaces": ["other_*"] }))).await;
+        assert_eq!(widened.status(), StatusCode::BAD_REQUEST, "{:?}", widened.body());
+        let approved = api.handle(post(Some(OPS), "/v1/publishers/beta/approve", serde_json::json!({ "namespaces": ["beta_*"] }))).await;
+        assert_eq!(approved.status(), StatusCode::OK, "{:?}", approved.body());
+        let body: PublisherResponse = serde_json::from_slice(approved.body().as_ref()).unwrap();
+        assert_eq!((body.status, body.namespaces.as_slice()), (PublisherStatus::Active, &["beta_*".to_owned()][..]));
+        let twice = api.handle(post(Some(OPS), "/v1/publishers/beta/approve", serde_json::json!({}))).await;
+        assert_eq!(twice.status(), StatusCode::CONFLICT);
+
+        let mut empty = request_with_certificate(Some(&pem_of(OPS)));
+        *empty.method_mut() = Method::POST;
+        *empty.uri_mut() = "/v1/publishers/beta/suspend".parse().unwrap();
+        let suspended = api.handle(empty).await;
+        assert_eq!(suspended.status(), StatusCode::OK, "{:?}", suspended.body());
+        let body: PublisherResponse = serde_json::from_slice(suspended.body().as_ref()).unwrap();
+        assert_eq!(body.status, PublisherStatus::Suspended);
+        assert_eq!(w.publishers.find(&beta).await.unwrap().unwrap().status(), PublisherStatus::Suspended);
+        let again = api.handle(post(Some(OPS), "/v1/publishers/beta/suspend", serde_json::json!({ "reason": "x" }))).await;
+        assert_eq!(again.status(), StatusCode::CONFLICT);
+
+        let rate = api.handle(post(Some(OPS), "/v1/publishers/beta/rate", serde_json::json!({ "requests_per_minute": 600 }))).await;
+        assert_eq!(rate.status(), StatusCode::OK, "{:?}", rate.body());
+        let body: RateResponse = serde_json::from_slice(rate.body().as_ref()).unwrap();
+        assert_eq!((body.requests_per_minute, body.uploads_per_day), (600, 20));
+        let zero = api.handle(post(Some(OPS), "/v1/publishers/beta/rate", serde_json::json!({ "uploads_per_day": 0 }))).await;
+        assert_eq!(zero.status(), StatusCode::BAD_REQUEST);
+        let reviewer = api.handle(post(Some(ANA), "/v1/publishers/beta/rate", serde_json::json!({}))).await;
+        assert_eq!(reviewer.status(), StatusCode::FORBIDDEN);
+    }
+
     fn get(certificate: Option<&[u8]>, path_and_query: &str) -> Request {
         let pem = certificate.map(pem_of);
         let mut request = request_with_certificate(pem.as_deref());
@@ -366,9 +410,8 @@ mod tests {
     async fn reviewers_read_the_queue_and_operators_fetch_the_staging_index() {
         let w = world();
         registered(&w).await;
-        let token = issued(&w).await;
-        submitted(&w, &token, "1.0.0").await;
-        submitted(&w, &token, "1.1.0").await;
+        submitted(&w, "1.0.0").await;
+        submitted(&w, "1.1.0").await;
         let api = api(&w);
 
         let queue = api.handle(get(Some(ANA), "/v1/versions")).await;
@@ -417,8 +460,7 @@ mod tests {
     async fn a_key_compromise_yanks_what_it_signed() {
         let w = world();
         registered(&w).await;
-        let token = issued(&w).await;
-        submitted(&w, &token, "1.0.0").await;
+        submitted(&w, "1.0.0").await;
         let api = api(&w);
         api.handle(post(Some(ANA), "/v1/versions/acme_count/1.0.0/approve", serde_json::json!({}))).await;
         let key_id = registry_domain::KeyId::of(&w.publisher_key.verifying_key());
@@ -444,19 +486,16 @@ mod tests {
             ("unknown certificate", post(Some(b"stranger"), "/v1/publishers", serde_json::json!({})), StatusCode::FORBIDDEN),
             ("no route", post(Some(OPS), "/v1/nothing", serde_json::json!({})), StatusCode::NOT_FOUND),
             ("bad body", post(Some(OPS), "/v1/publishers", serde_json::json!({ "id": "acme" })), StatusCode::BAD_REQUEST),
+            ("unknown field", post(Some(OPS), "/v1/publishers/acme/rate", serde_json::json!({ "x": 1 })), StatusCode::BAD_REQUEST),
+            ("unknown publisher", post(Some(OPS), "/v1/publishers/acme/approve", serde_json::json!({})), StatusCode::NOT_FOUND),
             (
-                "unknown field",
-                post(Some(OPS), "/v1/publishers/acme/tokens", serde_json::json!({ "scopes": [], "x": 1 })),
-                StatusCode::BAD_REQUEST,
-            ),
-            (
-                "unknown publisher",
+                "tokens are gone",
                 post(Some(OPS), "/v1/publishers/acme/tokens", serde_json::json!({ "scopes": ["acme_*"] })),
                 StatusCode::NOT_FOUND,
             ),
             (
                 "reviewer registering",
-                post(Some(ANA), "/v1/publishers", serde_json::json!({ "id": "acme", "public_key": "", "namespaces": [] })),
+                post(Some(ANA), "/v1/publishers", serde_json::json!({ "id": "acme", "public_key": "", "namespaces": [], "contact": "" })),
                 StatusCode::BAD_REQUEST,
             ),
             ("unknown version", post(Some(ANA), "/v1/versions/acme_count/1.0.0/approve", serde_json::json!({})), StatusCode::NOT_FOUND),
