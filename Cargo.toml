@@ -9,6 +9,7 @@ members = [
     "crates/adapters/lambda",
     "crates/adapters/http",
     "crates/runner",
+    "crates/cli",
     "crates/lambdas/publish-api",
     "crates/lambdas/admin-api",
     "crates/lambdas/test-runner",
@@ -52,6 +53,11 @@ aws-sdk-lambda = { version = "1", default-features = false, features = ["rt-toki
 lambda_http = { version = "1", default-features = false, features = ["apigw_http", "tracing"] }
 ulid = "1"
 blake2 = "0.11"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "query"] }
+clap = { version = "4", features = ["derive", "env"] }
+wiremock = "0.6"
+scrypt = { version = "0.12", default-features = false }
+rpassword = "7"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
