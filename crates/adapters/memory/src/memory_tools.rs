@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use registry_application::ports::ToolRepository;
 use registry_application::ApplicationError;
-use registry_domain::{Tool, ToolName};
+use registry_domain::{Status, Tool, ToolName, ToolVersion};
 
 /// An in-memory tool repository.
 #[derive(Default)]
@@ -18,6 +18,18 @@ impl ToolRepository for MemoryTools {
 
     async fn all(&self) -> Result<Vec<Tool>, ApplicationError> {
         Ok(self.0.lock().expect("lock").values().cloned().collect())
+    }
+
+    async fn versions_by_status(&self, status: Status) -> Result<Vec<ToolVersion>, ApplicationError> {
+        let mut versions: Vec<ToolVersion> = self
+            .0
+            .lock()
+            .expect("lock")
+            .values()
+            .flat_map(|t| t.versions().iter().filter(|v| v.status() == status).cloned().collect::<Vec<_>>())
+            .collect();
+        versions.sort_by_key(ToolVersion::submitted_at);
+        Ok(versions)
     }
 
     async fn save(&self, tool: &Tool, new: bool) -> Result<(), ApplicationError> {

@@ -53,9 +53,9 @@ The signature the operator uploads is what `axlr-registry operator sign-index` w
 
 | Method and path | Called by | Expected answer |
 |:--|:--|:--|
-| `GET /v1/versions?status=scanned` | `review list` | `200` a list of `{name, version, publisher, status, submitted_at}`; `status` any of the five, `scanned` being the reviewer's queue (GSI1) |
-| `GET /v1/versions/{name}/{version}` | `review show` | `200` the version with its manifest, scan findings, test report (`cases`, `passed`, `failed` names, `ran_at`) and review |
-| `GET /v1/index/staging` | `operator fetch-index` | `200` the unsigned canonical `index.json` bytes (`application/json`), read from `staging/index.json` |
+| `GET /v1/versions?status=scanned` | `review list` | `200` a list of version reports (the same shape as `GET /v1/versions/{name}/{version}` below), oldest submission first; `status` any of the five, `scanned` (the default) being the reviewer's queue (GSI1); `400` for another value |
+| `GET /v1/versions/{name}/{version}` | `review show` | `200` `{name, version, status, submitted_at, findings, tests_passed, failed_tests, rejected_reason}`; `404` when unknown |
+| `GET /v1/index/staging` | `operator fetch-index` | `200` the unsigned canonical `index.json` bytes (`application/json`), read from `staging/index.json`; `404` before the first publish; operators only |
 
 Until they exist the CLI gets a `404`; a reviewer can still approve a version named by the publisher, and the operator can read `staging/index.json` from the bucket. Adding them is a follow-up in `AdminRoute` and `AdminApi`.
 

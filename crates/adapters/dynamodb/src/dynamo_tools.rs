@@ -115,6 +115,10 @@ impl ToolRepository for DynamoTools {
         Ok(self.load(name).await?.map(|(_, t)| t))
     }
 
+    async fn versions_by_status(&self, status: Status) -> Result<Vec<ToolVersion>, ApplicationError> {
+        self.review_queue(status).await
+    }
+
     async fn all(&self) -> Result<Vec<Tool>, ApplicationError> {
         let mut grouped: BTreeMap<String, Vec<Item>> = BTreeMap::new();
         let mut start = None;

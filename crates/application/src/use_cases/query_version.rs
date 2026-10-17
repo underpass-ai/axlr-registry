@@ -1,6 +1,6 @@
 //! A publisher asks what became of an upload.
 
-use registry_domain::{TestReport, TokenDigest, ToolName, Version};
+use registry_domain::{TokenDigest, ToolName, Version};
 
 use crate::ports::{Clock, PublisherRepository, ToolRepository};
 use crate::use_cases::VersionReport;
@@ -28,15 +28,6 @@ impl<P: PublisherRepository, T: ToolRepository, C: Clock> QueryVersion<'_, P, T,
             .iter()
             .find(|v| v.version() == version)
             .ok_or_else(|| ApplicationError::NotFound(format!("{}@{version}", name.as_str())))?;
-        Ok(VersionReport {
-            name: name.clone(),
-            version: version.clone(),
-            status: target.status(),
-            submitted_at: target.submitted_at(),
-            scan: target.scan().cloned(),
-            tests_passed: target.tests().map(TestReport::all_passed),
-            failed_tests: target.tests().map(|t| t.failed().to_vec()).unwrap_or_default(),
-            rejected_reason: target.rejected_reason().map(str::to_owned),
-        })
+        Ok(VersionReport::of(target))
     }
 }

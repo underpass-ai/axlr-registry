@@ -6,7 +6,8 @@ use lambda_http::http::StatusCode;
 use lambda_http::{Body, Request, Response};
 use registry_application::ports::{AuditLog, Clock, IndexTrigger, IndexWriter, PrincipalRepository, PublisherRepository, ToolRepository};
 use registry_application::use_cases::{
-    ApproveVersion, AuthenticatePrincipal, IssueToken, PublishSignedIndex, RegisterPublisher, RejectVersion, RevokeKey, YankVersion,
+    ApproveVersion, AuthenticatePrincipal, IssueToken, ListVersions, PublishSignedIndex, ReadStagingIndex, RegisterPublisher,
+    RejectVersion, RevokeKey, ShowVersion, YankVersion,
 };
 use registry_application::{ApplicationError, Principal};
 use registry_domain::{RegistryPublicKey, Status, ToolName, Version};
@@ -14,7 +15,7 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::{
     AdminRoute, ClientCertificate, HttpError, IndexSignatureRequest, IssueTokenRequest, JsonBody, JsonResponse, RegisterPublisherRequest,
-    ReviewRequest, ReviewResponse, RevokeKeyRequest, RevokeKeyResponse, TokenGenerator, TokenResponse,
+    ReviewRequest, ReviewResponse, RevokeKeyRequest, RevokeKeyResponse, TokenGenerator, TokenResponse, VersionStatusResponse,
 };
 
 /// The admin API over its ports.
@@ -58,7 +59,7 @@ where
     async fn route(&self, request: Request) -> Result<Response<Body>, HttpError> {
         let certificate = ClientCertificate::from_request(&request)?;
         let principal = AuthenticatePrincipal { principals: self.principals }.execute(certificate.sha256()).await?;
-        match AdminRoute::parse(request.method(), request.uri().path())? {
+        match AdminRoute::parse(request.method(), request.uri().path(), request.uri().query())? {
             AdminRoute::RegisterPublisher => {
                 let (id, key, namespaces) = JsonBody::parse::<RegisterPublisherRequest>(&request)?.into_parts()?;
                 RegisterPublisher { publishers: self.publishers, audit: self.audit, clock: self.clock }
@@ -120,6 +121,23 @@ where
                     .await?;
                 Ok(JsonResponse::json(StatusCode::OK, &serde_json::json!({ "published": true, "index_sha256": digest.as_str() })))
             }
+            AdminRoute::ListVersions(status) => {
+                let reports = ListVersions { tools: self.tools }.execute(&principal, status).await?;
+                let queue: Vec<VersionStatusResponse> = reports.into_iter().map(Into::into).collect();
+                Ok(JsonResponse::json(StatusCode::OK, &queue))
+            }
+            AdminRoute::ShowVersion(name, version) => {
+                let report = ShowVersion { tools: self.tools }.execute(&principal, &name, &version).await?;
+                Ok(JsonResponse::json(StatusCode::OK, &VersionStatusResponse::from(report)))
+            }
+            AdminRoute::StagingIndex => {
+                let bytes = ReadStagingIndex { index: self.index }.execute(&principal).await?;
+                Ok(Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/json")
+                    .body(Body::Binary(bytes))
+                    .expect("a response builds"))
+            }
         }
     }
 
@@ -166,7 +184,7 @@ mod tests {
     use super::AdminApi;
     use crate::client_certificate::tests::{pem_of, request_with_certificate};
     use crate::upload_request::tests::signed_upload;
-    use crate::{ReviewResponse, RevokeKeyResponse, TokenResponse};
+    use crate::{ReviewResponse, RevokeKeyResponse, TokenResponse, VersionStatusResponse};
 
     const OPS: &[u8] = b"operator certificate";
     const ANA: &[u8] = b"reviewer certificate";
@@ -332,6 +350,65 @@ mod tests {
         assert_eq!(w.trigger.triggered(), 3);
         let not_operator = api.handle(post(Some(ANA), "/v1/index/publish", serde_json::json!({}))).await;
         assert_eq!(not_operator.status(), StatusCode::FORBIDDEN);
+    }
+
+    fn get(certificate: Option<&[u8]>, path_and_query: &str) -> Request {
+        let pem = certificate.map(pem_of);
+        let mut request = request_with_certificate(pem.as_deref());
+        *request.method_mut() = Method::GET;
+        *request.uri_mut() = path_and_query.parse().unwrap();
+        request
+    }
+
+    #[tokio::test]
+    async fn reviewers_read_the_queue_and_operators_fetch_the_staging_index() {
+        let w = world();
+        registered(&w).await;
+        let token = issued(&w).await;
+        submitted(&w, &token, "1.0.0").await;
+        submitted(&w, &token, "1.1.0").await;
+        let api = api(&w);
+
+        let queue = api.handle(get(Some(ANA), "/v1/versions")).await;
+        assert_eq!(queue.status(), StatusCode::OK, "{:?}", queue.body());
+        let versions: Vec<VersionStatusResponse> = serde_json::from_slice(queue.body().as_ref()).unwrap();
+        assert_eq!(versions.iter().map(|v| v.version.as_str()).collect::<Vec<_>>(), ["1.0.0", "1.1.0"]);
+        assert!(versions.iter().all(|v| v.status == Status::Scanned && v.tests_passed == Some(true)));
+
+        let approve = api.handle(post(Some(ANA), "/v1/versions/acme_count/1.0.0/approve", serde_json::json!({ "reason": "fine" }))).await;
+        assert_eq!(approve.status(), StatusCode::OK);
+        let approved = api.handle(get(Some(ANA), "/v1/versions?status=approved")).await;
+        let versions: Vec<VersionStatusResponse> = serde_json::from_slice(approved.body().as_ref()).unwrap();
+        assert_eq!(versions.len(), 1);
+        assert!(matches!(api.handle(get(Some(ANA), "/v1/versions?status=blessed")).await.status(), StatusCode::BAD_REQUEST));
+
+        let shown = api.handle(get(Some(ANA), "/v1/versions/acme_count/1.1.0")).await;
+        let version: VersionStatusResponse = serde_json::from_slice(shown.body().as_ref()).unwrap();
+        assert_eq!((version.version.as_str(), version.status), ("1.1.0", Status::Scanned));
+        assert_eq!(api.handle(get(Some(ANA), "/v1/versions/acme_count/9.9.9")).await.status(), StatusCode::NOT_FOUND);
+
+        assert_eq!(api.handle(get(Some(OPS), "/v1/index/staging")).await.status(), StatusCode::NOT_FOUND, "no index was published yet");
+        let index = PublishIndex {
+            catalog: "axlr",
+            publishers: &w.publishers,
+            tools: &w.tools,
+            artifacts: &w.artifacts,
+            index: &w.index,
+            audit: &w.audit,
+            clock: &w.clock,
+        }
+        .execute()
+        .await
+        .unwrap();
+        assert_eq!(
+            api.handle(get(Some(ANA), "/v1/index/staging")).await.status(),
+            StatusCode::FORBIDDEN,
+            "a reviewer read the staging index"
+        );
+        let staging = api.handle(get(Some(OPS), "/v1/index/staging")).await;
+        assert_eq!(staging.status(), StatusCode::OK);
+        assert_eq!(staging.body().as_ref(), index.canonical().as_slice());
+        assert_eq!(api.handle(get(None, "/v1/versions")).await.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

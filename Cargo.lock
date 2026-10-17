@@ -2340,6 +2340,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "registry-e2e"
+version = "0.1.0"
+dependencies = [
+ "axlr-registry-cli",
+ "registry-domain",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "registry-http"
 version = "0.1.0"
 dependencies = [

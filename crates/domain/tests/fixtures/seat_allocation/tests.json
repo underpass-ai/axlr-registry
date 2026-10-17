@@ -1,0 +1,11 @@
+[
+  {"name": "dhondt textbook", "input": {"seats": 7, "votes": {"A": 100000, "B": 80000, "C": 30000, "D": 20000}},
+   "expect": {"exit": 0, "stdout_json": {"allocation": {"A": 3, "B": 3, "C": 1, "D": 0}}}},
+  {"name": "sainte-lague favours small parties", "input": {"seats": 7, "votes": {"A": 100000, "B": 80000, "C": 30000, "D": 20000}, "method": "sainte_lague"},
+   "expect": {"exit": 0, "stdout_json": {"allocation": {"A": 3, "B": 2, "C": 1, "D": 1}}}},
+  {"name": "hare with threshold", "input": {"seats": 10, "votes": {"A": 4100, "B": 3100, "C": 1800, "D": 1000}, "method": "hare", "threshold": 15},
+   "expect": {"exit": 0, "stdout_json": {"allocation": {"A": 5, "B": 3, "C": 2, "D": 0}, "excluded_by_threshold": ["D"]}}},
+  {"name": "tie reported", "input": {"seats": 1, "votes": {"A": 10, "B": 10}},
+   "expect": {"exit": 0, "stdout_json": {"allocation": {"A": 1, "B": 0}, "ties": [{"between": ["A", "B"], "awarded_to": "A"}]}}},
+  {"name": "bad seats", "input": {"seats": 0, "votes": {"A": 1}}, "expect": {"exit": 2, "stdout_contains": "seats must be"}}
+]
