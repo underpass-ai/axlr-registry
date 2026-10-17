@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use registry_application::ports::ArtifactStore;
 use registry_application::ApplicationError;
-use registry_domain::{Status, ToolName, ValidBundle, Version};
+use registry_domain::{FileName, Status, ToolName, ValidBundle, Version};
 
 /// An in-memory artifact store; quarantine keys are
 /// `status/name/version/file`, published keys `name/version/file`.
@@ -50,11 +50,28 @@ impl ArtifactStore for MemoryArtifacts {
         Ok(())
     }
 
+    async fn quarantine_tests(&self, name: &ToolName, version: &Version, tests: &[u8]) -> Result<(), ApplicationError> {
+        self.quarantine.lock().expect("lock").insert(format!("scanned/{}/{version}/tests.json", name.as_str()), tests.to_vec());
+        Ok(())
+    }
+
+    async fn read_quarantine(&self, name: &ToolName, version: &Version) -> Result<BTreeMap<FileName, Vec<u8>>, ApplicationError> {
+        let prefix = format!("scanned/{}/{version}/", name.as_str());
+        let quarantine = self.quarantine.lock().expect("lock");
+        quarantine
+            .iter()
+            .filter_map(|(key, content)| key.strip_prefix(&prefix).map(|file| (file, content)))
+            .map(|(file, content)| {
+                FileName::parse(file).map(|n| (n, content.clone())).map_err(|e| ApplicationError::port("artifacts", e.to_string()))
+            })
+            .collect()
+    }
+
     async fn publish(&self, name: &ToolName, version: &Version) -> Result<(), ApplicationError> {
         let prefix = format!("scanned/{}/{version}/", name.as_str());
         let quarantine = self.quarantine.lock().expect("lock");
         let mut published = self.published.lock().expect("lock");
-        for (key, content) in quarantine.iter().filter(|(k, _)| k.starts_with(&prefix)) {
+        for (key, content) in quarantine.iter().filter(|(k, _)| k.starts_with(&prefix) && !k.ends_with("/tests.json")) {
             published.insert(key.trim_start_matches("scanned/").to_owned(), content.clone());
         }
         Ok(())

@@ -14,6 +14,16 @@ path = "src/main.rs"
 [dependencies]
 registry-domain.workspace = true
 registry-application.workspace = true
+registry-runner.workspace = true
+registry-s3.workspace = true
+registry-dynamodb.workspace = true
+registry-lambda.workspace = true
+aws-config.workspace = true
+aws-sdk-s3.workspace = true
+aws-sdk-dynamodb.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+lambda_runtime.workspace = true
 
 [lints]
 workspace = true

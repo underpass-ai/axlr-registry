@@ -1,9 +1,11 @@
 //! The artifact store over S3.
 
+use std::collections::BTreeMap;
+
 use aws_sdk_s3::primitives::ByteStream;
 use registry_application::ports::ArtifactStore;
 use registry_application::ApplicationError;
-use registry_domain::{Status, ToolName, ValidBundle, Version};
+use registry_domain::{FileName, Status, ToolName, ValidBundle, Version};
 
 use crate::bucket::Bucket;
 use crate::object_key::ObjectKey;
@@ -69,6 +71,35 @@ impl ArtifactStore for S3Artifacts {
             self.put(&format!("{prefix}{}", name.as_str()), content.clone()).await?;
         }
         Ok(())
+    }
+
+    async fn quarantine_tests(&self, name: &ToolName, version: &Version, tests: &[u8]) -> Result<(), ApplicationError> {
+        let prefix = ObjectKey::quarantine_prefix(Status::Scanned, name, version);
+        self.put(&format!("{prefix}tests.json"), tests.to_vec()).await
+    }
+
+    async fn read_quarantine(&self, name: &ToolName, version: &Version) -> Result<BTreeMap<FileName, Vec<u8>>, ApplicationError> {
+        let prefix = ObjectKey::quarantine_prefix(Status::Scanned, name, version);
+        let mut files = BTreeMap::new();
+        for key in self.list(&prefix).await? {
+            let file = key.strip_prefix(&prefix).unwrap_or(&key);
+            if file.is_empty() || file.contains('/') {
+                continue;
+            }
+            let file = FileName::parse(file).map_err(|e| ApplicationError::port("s3", format!("{key}: {e}")))?;
+            let object = self
+                .bucket
+                .client()
+                .get_object()
+                .bucket(self.bucket.name())
+                .key(&key)
+                .send()
+                .await
+                .map_err(|e| s3_error(&format!("get {key}"), e))?;
+            let bytes = object.body.collect().await.map_err(|e| ApplicationError::port("s3", format!("read {key}: {e}")))?;
+            files.insert(file, bytes.into_bytes().to_vec());
+        }
+        Ok(files)
     }
 
     async fn publish(&self, name: &ToolName, version: &Version) -> Result<(), ApplicationError> {

@@ -1,13 +1,20 @@
 //! A publisher uploads a signed bundle.
 
-use registry_domain::{Bundle, PolicyScan, PublisherSignature, Status, TokenDigest, Tool, ToolVersion};
+use registry_domain::{Bundle, DomainError, PolicyScan, PublisherSignature, Status, TokenDigest, Tool, ToolVersion};
 
 use crate::ports::{ArtifactStore, AuditLog, Clock, PublisherRepository, TestScheduler, ToolRepository};
 use crate::use_cases::SubmissionOutcome;
 use crate::{ApplicationError, AuditEntry};
 
+/// `tests.json` is at most this long.
+pub const MAX_TESTS_BYTES: usize = 256 * 1024;
+
 /// Authenticates the token, validates and scans the bundle, stores it in
-/// quarantine and schedules its tests.
+/// quarantine with its `tests.json` and schedules its tests. The tests
+/// travel beside the bundle, not inside it: they are the registry's
+/// evidence, not part of what the console installs or the publisher signs.
+/// A version without tests is accepted and stays unapprovable, which the
+/// reviewer sees in its report.
 pub struct SubmitVersion<'a, P, T, A, S, L, C> {
     /// Publishers.
     pub publishers: &'a P,
@@ -33,8 +40,17 @@ where
     C: Clock,
 {
     /// Runs the command.
-    pub async fn execute(&self, token: &str, bundle: Bundle, signature: PublisherSignature) -> Result<SubmissionOutcome, ApplicationError> {
+    pub async fn execute(
+        &self,
+        token: &str,
+        bundle: Bundle,
+        signature: PublisherSignature,
+        tests: Option<&[u8]>,
+    ) -> Result<SubmissionOutcome, ApplicationError> {
         let now = self.clock.now();
+        if tests.is_some_and(|t| t.is_empty() || t.len() > MAX_TESTS_BYTES || t.contains(&0)) {
+            return Err(DomainError::Invalid { what: "tests", rule: "text, 1 byte to 256 KiB".to_owned() }.into());
+        }
         let digest = TokenDigest::of(token);
         let publisher = self.publishers.find_by_token(&digest).await?.ok_or_else(|| ApplicationError::Forbidden("unknown token".into()))?;
         let bundle = bundle.validate()?;
@@ -48,6 +64,9 @@ where
         };
         tool.add(version.clone())?;
         self.artifacts.quarantine(&bundle, version.status()).await?;
+        if let (Some(tests), Status::Scanned) = (tests, version.status()) {
+            self.artifacts.quarantine_tests(bundle.name(), bundle.version(), tests).await?;
+        }
         self.tools.save(&tool, new).await?;
         if version.status() == Status::Scanned {
             self.tests.schedule(version.name(), version.version()).await?;

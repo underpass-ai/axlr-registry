@@ -5,7 +5,7 @@ all-features = true
 ignore = []
 
 [licenses]
-allow = ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib", "CC0-1.0", "MPL-2.0", "OpenSSL"]
+allow = ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib", "CC0-1.0", "MPL-2.0", "OpenSSL", "CDLA-Permissive-2.0"]
 
 [bans]
 multiple-versions = "warn"

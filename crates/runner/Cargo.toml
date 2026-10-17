@@ -1,0 +1,25 @@
+[package]
+name = "registry-runner"
+description = "Runs a tool version's tests.json with the axlr_run_tool contract and records the report"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+registry-domain.workspace = true
+registry-application.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+registry-memory.workspace = true
+ed25519-dalek.workspace = true
+tempfile.workspace = true
+time.workspace = true
+
+[lints]
+workspace = true

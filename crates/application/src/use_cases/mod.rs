@@ -28,6 +28,6 @@ pub use register_publisher::RegisterPublisher;
 pub use reject_version::RejectVersion;
 pub use revoke_key::RevokeKey;
 pub use submission_outcome::SubmissionOutcome;
-pub use submit_version::SubmitVersion;
+pub use submit_version::{SubmitVersion, MAX_TESTS_BYTES};
 pub use version_report::VersionReport;
 pub use yank_version::YankVersion;

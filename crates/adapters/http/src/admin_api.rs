@@ -255,7 +255,7 @@ mod tests {
     }
 
     async fn submitted(w: &World, token: &str, version: &str) {
-        let (bundle, signature) = signed_upload(&w.publisher_key, version, "print(1)\n").into_submission().unwrap();
+        let (bundle, signature, tests) = signed_upload(&w.publisher_key, version, "print(1)\n").into_submission().unwrap();
         SubmitVersion {
             publishers: &w.publishers,
             tools: &w.tools,
@@ -264,7 +264,7 @@ mod tests {
             audit: &w.audit,
             clock: &w.clock,
         }
-        .execute(token, bundle, signature)
+        .execute(token, bundle, signature, tests.as_deref())
         .await
         .unwrap();
         RecordTestReport { tools: &w.tools, audit: &w.audit }

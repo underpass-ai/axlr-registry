@@ -67,7 +67,7 @@ where
             }
         }
         let body: UploadRequest = JsonBody::parse(request)?;
-        let (bundle, signature) = body.into_submission()?;
+        let (bundle, signature, tests) = body.into_submission()?;
         let submit = SubmitVersion {
             publishers: self.publishers,
             tools: self.tools,
@@ -76,7 +76,7 @@ where
             audit: self.audit,
             clock: self.clock,
         };
-        let outcome = submit.execute(token.as_str(), bundle, signature).await?;
+        let outcome = submit.execute(token.as_str(), bundle, signature, tests.as_deref()).await?;
         let response = UploadResponse::from(outcome);
         let text = serde_json::to_string(&response).map_err(|e| HttpError::BadRequest(e.to_string()))?;
         if let Some(key) = &key {
