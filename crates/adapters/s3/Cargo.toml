@@ -1,0 +1,27 @@
+[package]
+name = "registry-s3"
+description = "S3 adapters: the artifact store and the index writer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# Tests against DynamoDB Local and MinIO; see README.
+integration = []
+
+[dependencies]
+registry-domain.workspace = true
+registry-application.workspace = true
+aws-sdk-s3.workspace = true
+
+
+[dev-dependencies]
+tokio.workspace = true
+aws-config.workspace = true
+serde_json.workspace = true
+ulid.workspace = true
+
+[lints]
+workspace = true

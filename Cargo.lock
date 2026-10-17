@@ -1892,8 +1892,9 @@ dependencies = [
  "aws-sdk-s3",
  "registry-application",
  "registry-domain",
- "registry-memory",
+ "serde_json",
  "tokio",
+ "ulid",
 ]
 
 [[package]]
