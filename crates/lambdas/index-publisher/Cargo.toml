@@ -1,0 +1,19 @@
+[package]
+name = "index-publisher"
+description = "AXLR registry Lambda: index-publisher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "bootstrap"
+path = "src/main.rs"
+
+[dependencies]
+registry-domain.workspace = true
+registry-application.workspace = true
+
+[lints]
+workspace = true

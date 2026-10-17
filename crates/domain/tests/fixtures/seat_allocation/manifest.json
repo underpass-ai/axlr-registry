@@ -1,0 +1,31 @@
+{
+  "name": "seat_allocation",
+  "description": "Allocate seats among parties from their votes by D'Hondt, Sainte-Laguë, modified Sainte-Laguë or Hare largest remainder, with an optional electoral threshold. Exact arithmetic; reports the award order and ties.",
+  "input_schema": {
+    "type": "object",
+    "required": ["seats", "votes"],
+    "additionalProperties": false,
+    "properties": {
+      "seats": {"type": "integer", "minimum": 1, "description": "Seats to allocate"},
+      "votes": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}, "description": "Votes per party"},
+      "method": {"type": "string", "enum": ["dhondt", "sainte_lague", "modified_sainte_lague", "hare"], "default": "dhondt"},
+      "threshold": {"type": "number", "minimum": 0, "maximum": 99, "default": 0, "description": "Minimum share of valid votes, in percent, to receive seats"}
+    }
+  },
+  "program": "python3",
+  "args": ["seat_allocation.py"],
+  "files": ["seat_allocation.py"],
+  "catalog": {
+    "version": "1.0.0",
+    "category": "politics_civics",
+    "tags": ["elections", "dhondt", "sainte-lague", "hare", "proportional"],
+    "license": "MIT",
+    "requires": {"program_min_version": "3.10", "packages": []},
+    "network": false,
+    "example": {
+      "input": {"seats": 7, "votes": {"A": 100000, "B": 80000, "C": 30000, "D": 20000}, "method": "dhondt", "threshold": 3},
+      "output": {"allocation": {"A": 3, "B": 3, "C": 1, "D": 0}}
+    },
+    "source": "original; D'Hondt, Sainte-Laguë and Hare as described in Gallagher & Mitchell, The Politics of Electoral Systems (2005)"
+  }
+}

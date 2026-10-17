@@ -1,3 +1,3 @@
-/bin/
-coverage.out
-*.test
+target/
+.aws-sam/
+*.minisig.tmp

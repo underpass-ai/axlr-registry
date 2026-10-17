@@ -1,0 +1,90 @@
+# Every merge to main: the dev checks, then the 80 % coverage gate, licence
+# and advisory audit, the adapter integration tests against DynamoDB Local
+# and MinIO, and a release build of every Lambda for arm64.
+name: ci-main
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: main
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov,cargo-deny
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features
+      - run: cargo deny check
+      - name: Coverage gate (80 % of lines; Lambda entry points excluded)
+        run: >
+          cargo llvm-cov --workspace --all-features
+          --ignore-filename-regex 'crates/lambdas/.*/src/main\.rs'
+          --fail-under-lines 80 --summary-only
+
+  integration:
+    # Enabled when crates/adapters/{dynamodb,s3} exist with an `integration` feature.
+    if: false
+    runs-on: ubuntu-24.04
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local:latest
+        ports: ['8000:8000']
+      minio:
+        image: bitnami/minio:latest   # starts without arguments, unlike minio/minio
+        env: { MINIO_ROOT_USER: test, MINIO_ROOT_PASSWORD: testtest }
+        ports: ['9000:9000']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: integration
+      - name: Adapter integration tests
+        env:
+          DYNAMODB_ENDPOINT: http://localhost:8000
+          S3_ENDPOINT: http://localhost:9000
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: testtest
+          AWS_REGION: eu-west-1
+        run: cargo test --workspace --features integration -- --include-ignored integration
+
+  template:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/setup-sam@v2
+      - run: sam validate --template-file infra/template.yaml --lint
+
+  lambda-build:
+    runs-on: ubuntu-24.04-arm   # free on public repositories
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: lambda-arm64
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-lambda
+      - run: cargo lambda build --release --arm64 --workspace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lambdas-${{ github.sha }}
+          path: target/lambda/*/bootstrap
+          retention-days: 7

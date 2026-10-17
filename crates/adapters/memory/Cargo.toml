@@ -1,0 +1,15 @@
+[package]
+name = "registry-memory"
+description = "In-memory adapters of the registry ports, for tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+registry-domain.workspace = true
+registry-application.workspace = true
+
+[lints]
+workspace = true

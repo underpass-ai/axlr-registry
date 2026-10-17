@@ -1,0 +1,74 @@
+//! The AXLR tool registry domain: pure, with no I/O. One type per file.
+//! Invariants are documented in `docs/domain.md`.
+
+mod bundle;
+mod catalog_block;
+mod digest;
+mod error;
+mod file_name;
+mod finding;
+mod index;
+mod index_entry;
+mod key_id;
+mod manifest;
+mod policy_scan;
+mod publisher;
+mod publisher_id;
+mod publisher_key;
+mod publisher_signature;
+mod requires;
+mod review;
+mod reviewer_id;
+mod revocation;
+mod revoked_key;
+mod scan_report;
+mod scan_rule;
+mod scope;
+mod severity;
+mod status;
+mod test_report;
+mod token;
+mod token_digest;
+mod tool;
+mod tool_name;
+mod tool_version;
+mod valid_bundle;
+mod version;
+mod yank;
+
+pub use bundle::Bundle;
+pub use catalog_block::CatalogBlock;
+pub use digest::Digest;
+pub use error::DomainError;
+pub use file_name::FileName;
+pub use finding::Finding;
+pub use index::Index;
+pub use index_entry::IndexEntry;
+pub use key_id::KeyId;
+pub use manifest::Manifest;
+pub use policy_scan::PolicyScan;
+pub use publisher::Publisher;
+pub use publisher_id::PublisherId;
+pub use publisher_key::PublisherKey;
+pub use publisher_signature::PublisherSignature;
+pub use requires::Requires;
+pub use review::Review;
+pub use reviewer_id::ReviewerId;
+pub use revocation::Revocation;
+pub use revoked_key::RevokedKey;
+pub use scan_report::ScanReport;
+pub use scope::Scope;
+pub use severity::Severity;
+pub use status::Status;
+pub use test_report::TestReport;
+pub use token::Token;
+pub use token_digest::TokenDigest;
+pub use tool::Tool;
+pub use tool_name::ToolName;
+pub use tool_version::ToolVersion;
+pub use valid_bundle::ValidBundle;
+pub use version::Version;
+pub use yank::Yank;
+
+/// A point in time, UTC.
+pub type Timestamp = time::OffsetDateTime;

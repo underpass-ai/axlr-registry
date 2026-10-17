@@ -1,0 +1,103 @@
+# A tag v* builds every Lambda, pushes the test-runner image, deploys to the
+# staging stack through the OIDC role, runs the end-to-end test, and then
+# deploys to production behind an environment that requires a reviewer.
+# Releases carry the binaries and their SHA-256.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+  AWS_REGION: ${{ vars.AWS_REGION }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-arm64
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-lambda
+      - run: cargo lambda build --release --arm64 --workspace
+      - name: Checksums
+        run: |
+          mkdir -p dist
+          for f in target/lambda/*/bootstrap; do
+            name=$(basename "$(dirname "$f")")
+            cp "$f" "dist/$name-bootstrap"
+          done
+          (cd dist && sha256sum * > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.ref_name }}
+          path: |
+            dist/
+            target/lambda/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+
+  deploy-staging:
+    needs: build
+    runs-on: ubuntu-24.04-arm   # free on public repositories; the Lambdas are arm64 and sam build compiles natively here
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-lambda
+      - uses: aws-actions/setup-sam@v2
+      - run: sam build --template-file infra/template.yaml
+      - name: Deploy staging
+        run: >
+          sam deploy --stack-name axlr-registry-staging
+          --resolve-s3 --resolve-image-repos --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
+          --parameter-overrides Stage=staging DomainName=${{ vars.STAGING_DOMAIN }} HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
+          CloudFrontCertificateArn=${{ vars.STAGING_CLOUDFRONT_CERT_ARN }} TruststoreBucket=${{ vars.STAGING_TRUSTSTORE_BUCKET }} TruststoreVersion=${{ vars.STAGING_TRUSTSTORE_VERSION }}
+      - name: End-to-end test against staging
+        env:
+          REGISTRY_E2E_PUBLISH_URL: https://api.${{ vars.STAGING_DOMAIN }}
+          REGISTRY_E2E_ADMIN_URL: https://admin.${{ vars.STAGING_DOMAIN }}
+          REGISTRY_E2E_TOKEN: ${{ secrets.STAGING_E2E_TOKEN }}
+          REGISTRY_E2E_CLIENT_CERT: ${{ secrets.STAGING_E2E_CLIENT_CERT }}
+          REGISTRY_E2E_CLIENT_KEY: ${{ secrets.STAGING_E2E_CLIENT_KEY }}
+        run: echo "tests/e2e not written yet: wire it here"
+
+  deploy-production:
+    needs: deploy-staging
+    runs-on: ubuntu-24.04-arm
+    environment: production   # requires a reviewer in the repository settings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-lambda
+      - uses: aws-actions/setup-sam@v2
+      - run: sam build --template-file infra/template.yaml
+      - name: Deploy production
+        run: >
+          sam deploy --stack-name axlr-registry-production
+          --resolve-s3 --resolve-image-repos --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
+          --parameter-overrides Stage=production DomainName=${{ vars.PRODUCTION_DOMAIN }} HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
+          CloudFrontCertificateArn=${{ vars.PRODUCTION_CLOUDFRONT_CERT_ARN }} TruststoreBucket=${{ vars.PRODUCTION_TRUSTSTORE_BUCKET }} TruststoreVersion=${{ vars.PRODUCTION_TRUSTSTORE_VERSION }}

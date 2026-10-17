@@ -1,0 +1,30 @@
+{
+  "name": "business_days",
+  "description": "Count the working days between two dates, add or subtract working days to a date, or list them, skipping weekends and a given holiday list. Deadlines, SLAs and administrative terms.",
+  "input_schema": {
+    "type": "object",
+    "required": ["operation", "start"],
+    "additionalProperties": false,
+    "properties": {
+      "operation": {"type": "string", "enum": ["count", "add", "list"]},
+      "start": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+      "end": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Inclusive; count and list"},
+      "days": {"type": "integer", "description": "Working days to add (negative subtracts); add"},
+      "holidays": {"type": "array", "items": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"}, "default": []},
+      "weekend": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 7}, "default": [6, 7], "description": "ISO weekdays that are not working days"}
+    }
+  },
+  "program": "python3",
+  "args": ["business_days.py"],
+  "files": ["business_days.py"],
+  "catalog": {
+    "version": "1.0.0",
+    "category": "administration",
+    "tags": ["dates", "deadlines", "calendar", "working-days", "sla"],
+    "license": "MIT",
+    "requires": {"program_min_version": "3.10", "packages": []},
+    "network": false,
+    "example": {"input": {"operation": "add", "start": "2026-12-23", "days": 10, "holidays": ["2026-12-25", "2027-01-01", "2027-01-06"]}, "output": {"result": "2027-01-11"}},
+    "source": "original"
+  }
+}
