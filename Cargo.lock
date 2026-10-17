@@ -1902,7 +1902,6 @@ dependencies = [
  "aws-sdk-lambda",
  "registry-application",
  "registry-domain",
- "registry-memory",
  "serde",
  "serde_json",
  "time",
