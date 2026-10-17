@@ -70,6 +70,7 @@ jobs:
         with:
           name: lambdas-${{ github.ref_name }}
           path: target/lambda
+      - run: chmod 755 target/lambda/*/bootstrap   # artifacts drop the executable bit
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
@@ -105,6 +106,7 @@ jobs:
         with:
           name: lambdas-${{ github.ref_name }}
           path: target/lambda
+      - run: chmod 755 target/lambda/*/bootstrap   # artifacts drop the executable bit
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
@@ -160,6 +162,7 @@ jobs:
         with:
           name: lambdas-${{ github.ref_name }}
           path: target/lambda
+      - run: chmod 755 target/lambda/*/bootstrap   # artifacts drop the executable bit
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}

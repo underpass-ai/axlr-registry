@@ -9,5 +9,6 @@ RUN dnf install -y python3 bash nodejs && dnf clean all
 # /tmp/axlr-registry/<name>/<version>/ (crates/lambdas/test-runner).
 ENV HOME=/tmp
 
-COPY bootstrap ${LAMBDA_RUNTIME_DIR}/bootstrap
+# --chmod: the binary arrives through a workflow artifact, which drops the executable bit.
+COPY --chmod=755 bootstrap ${LAMBDA_RUNTIME_DIR}/bootstrap
 CMD ["bootstrap"]
