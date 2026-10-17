@@ -202,7 +202,7 @@ Resources:
           Properties: { ApiId: !Ref PublishApi, Path: /v1/versions, Method: POST }
         Status:
           Type: HttpApi
-          Properties: { ApiId: !Ref PublishApi, Path: /v1/versions/{name}/{version}, Method: GET }
+          Properties: { ApiId: !Ref PublishApi, Path: '/v1/versions/{name}/{version}', Method: GET }
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref Table }
         - S3WritePolicy: { BucketName: !Ref Artifacts }
@@ -224,7 +224,7 @@ Resources:
       Events:
         Admin:
           Type: HttpApi
-          Properties: { ApiId: !Ref AdminApi, Path: /v1/{proxy+}, Method: ANY }
+          Properties: { ApiId: !Ref AdminApi, Path: '/v1/{proxy+}', Method: ANY }
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref Table }
         - S3CrudPolicy: { BucketName: !Ref Artifacts }

@@ -25,6 +25,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-arm64
+      - uses: mlugg/setup-zig@v2   # cargo-lambda links against Amazon Linux's glibc through Zig
+        with:
+          version: 0.13.0
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-lambda
@@ -59,6 +62,9 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mlugg/setup-zig@v2   # cargo-lambda links against Amazon Linux's glibc through Zig
+        with:
+          version: 0.13.0
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-lambda
@@ -77,7 +83,7 @@ jobs:
           REGISTRY_E2E_TOKEN: ${{ secrets.STAGING_E2E_TOKEN }}
           REGISTRY_E2E_CLIENT_CERT: ${{ secrets.STAGING_E2E_CLIENT_CERT }}
           REGISTRY_E2E_CLIENT_KEY: ${{ secrets.STAGING_E2E_CLIENT_KEY }}
-        run: echo "tests/e2e not written yet: wire it here"
+        run: echo "tests/e2e not written yet; wire it here"
 
   deploy-production:
     needs: deploy-staging
@@ -90,6 +96,9 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mlugg/setup-zig@v2   # cargo-lambda links against Amazon Linux's glibc through Zig
+        with:
+          version: 0.13.0
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-lambda

@@ -79,6 +79,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: lambda-arm64
+      - uses: mlugg/setup-zig@v2   # cargo-lambda links against Amazon Linux's glibc through Zig
+        with:
+          version: 0.13.0
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-lambda
