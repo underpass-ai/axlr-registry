@@ -104,6 +104,8 @@ jobs:
 
   deploy-production:
     needs: deploy-staging
+    # Only once production is configured; until then the run ends with staging instead of waiting for an approval.
+    if: ${{ vars.PRODUCTION_DOMAIN != '' }}
     runs-on: ubuntu-24.04-arm
     environment: production   # requires a reviewer in the repository settings
     steps:
