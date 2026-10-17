@@ -18,7 +18,7 @@ Status: decided on 17 Oct 2026 with Tirso; nothing deployed yet. The domain is i
 flowchart LR
     Console[AXLR console<br/>/tools install] -->|GET index.json, .minisig, files| CF[CloudFront<br/>registry.DOMAIN]
     CF --> S3pub[(S3 published/<br/>index, manifests, files, site)]
-    Publisher[publisher CLI<br/>bearer token + Ed25519] -->|HTTPS| APIpub[HTTP API<br/>api.DOMAIN]
+    Publisher[publisher CLI or console<br/>Ed25519-signed requests] -->|HTTPS| APIpub[HTTP API<br/>api.DOMAIN]
     Reviewer[reviewer / operator CLI<br/>client certificate] -->|mTLS| APIadm[HTTP API<br/>admin.DOMAIN<br/>truststore in S3]
     APIpub --> Lpub[λ publish-api<br/>validate · scan · store]
     APIadm --> Ladm[λ admin-api<br/>publishers · review · yank · publish]
@@ -37,8 +37,8 @@ Four Lambdas (arm64, `provided.al2023`, except the test runner):
 
 | Lambda | Trigger | Does | Why separate |
 |:--|:--|:--|:--|
-| `publish-api` | HTTP API `api.DOMAIN` | authenticates the bearer token, validates the bundle, verifies the publisher signature, runs the policy scan inline (a pure function, milliseconds), writes the version and the files to `quarantine/`, invokes `test-runner` asynchronously | the only Lambda publishers can reach |
-| `admin-api` | HTTP API `admin.DOMAIN` with mTLS | maps the client certificate's SHA-256 to a principal and role (the same idea as `axlr-serve`'s principals file), registers publishers, issues and revokes keys and tokens, approves, rejects, yanks, accepts the signed `.minisig`, invokes `index-publisher` | reachable only with a certificate from our private CA; the default `execute-api` endpoint is disabled |
+| `publish-api` | HTTP API `api.DOMAIN` | authenticates the signed request (timestamp, key and publisher status, signature, nonce, rate windows), takes enrolments, validates the bundle, verifies the publisher signature, runs the policy scan inline (a pure function, milliseconds), writes the version and the files to `quarantine/`, invokes `test-runner` asynchronously | the only Lambda publishers can reach |
+| `admin-api` | HTTP API `admin.DOMAIN` with mTLS | maps the client certificate's SHA-256 to a principal and role (the same idea as `axlr-serve`'s principals file), registers, approves and suspends publishers, sets their rate limits, revokes keys, approves, rejects, yanks, accepts the signed `.minisig`, invokes `index-publisher` | reachable only with a certificate from our private CA; the default `execute-api` endpoint is disabled |
 | `test-runner` | asynchronous invoke from `publish-api` | copies the version's files from `quarantine/` to `/tmp`, runs `tests.json` with the `axlr_run_tool` contract (one JSON object on stdin, `PATH` and `HOME` only, a timeout, an output cap) and records the `TestReport` | needs `python3`, `bash` and `node`, which the OS-only runtime lacks: a container image (ECR, about $0.10 per GB-month); runs in a VPC subnet with no NAT gateway and no internet gateway, so the tool under test has no network; S3 and DynamoDB are reached through gateway endpoints, which are free |
 | `index-publisher` | asynchronous invoke from `admin-api` after an approval, a yank or a key revocation | builds the canonical index from DynamoDB, writes it to `staging/index.json`, copies the approved versions' manifests and files from `quarantine/` to `published/tools/<name>/<version>/` | keeps the publish path idempotent and separate from the request that caused it |
 
@@ -62,23 +62,25 @@ The API certificates, the hosted-zone records, the table, the artifact bucket, t
 |:--|:--|:--|:--|
 | Publisher | `PUB#<id>` | `META` | `attribute_not_exists(PK)` on registration; `version = :expected` (optimistic lock) on every change |
 | Publisher key | `PUB#<id>` | `KEY#<key id>` | `attribute_not_exists` on add |
-| Token | `TOKEN#<digest>` | `META` (GSI-free lookup by digest) | `attribute_not_exists` |
+| Key pointer | `KEYID#<key id>` | `META` (GSI-free lookup by key id) | `attribute_not_exists OR publisher = :p` |
+| Used nonce | `NONCE#<key id>#<nonce>` | `META`, `expires_at` (TTL, 10 min) | `attribute_not_exists OR expires_at <= :now` |
+| Rate window | `RATE#<key id or ip:<address>>#<window>` | `META`, `count`, `expires_at` (TTL) | atomic `ADD count :one` |
 | Tool | `TOOL#<name>` | `META` (owner, latest version) | `attribute_not_exists(PK)` on first submission: name ownership; `latest = :seen` when a version is added: strictly increasing versions |
 | Tool version | `TOOL#<name>` | `VER#<version>` | `attribute_not_exists`; status changes condition on the status read (`status = :from`) |
 | Audit entry | `AUDIT#<yyyy-mm>` | `<timestamp>#<ulid>` | append only; never updated or deleted |
 | Principal (admin) | `PRINCIPAL#<cert sha256>` | `META` | written only by the operator CLI |
 
-Tokens are stored as SHA-256 digests only. A GSI `GSI1` (`status`, `submitted_at`) lists the reviewer's queue.
+The publisher META item carries `status` (pending, active, suspended), `contact` and the rate overrides. Items with `expires_at` are removed by the table's TTL. A GSI `GSI1` (`status`, `submitted_at`) lists the reviewer's queue.
 
 **S3**, one bucket, versioning on, public access blocked, three prefixes: `quarantine/<status>/<name>/<version>/` (uploads and test logs; `publish-api` writes under `quarantine/rejected/` when the scan blocks, so the 90-day lifecycle rule expires only those), `staging/` (the unsigned index), `published/` (what CloudFront serves through an origin access control; nothing else is readable from the internet). The truststore for mTLS is a second, tiny, versioned bucket created before the stack (see the bootstrap order), because the custom domain pins a truststore object version.
 
 ## Security
 
-- **Publishers**: HTTPS, a bearer token (at least 32 random bytes, shown once, stored as a digest, scoped to names) and an Ed25519 signature over the bundle digest. Both are checked by the domain, not the gateway.
+- **Publishers**: HTTPS and one Ed25519 key per publisher, which signs the bundle digest and every request (`docs/client-identity.md`: timestamp within ±300 s, a nonce never reused with the key, per-key rate windows). Checked by the domain and the use cases, not the gateway.
 - **Reviewers and operators**: mTLS on `admin.DOMAIN`, client certificates issued by a private CA generated offline (the CA key never enters AWS; the truststore holds only the CA certificate). API Gateway passes the certificate in `requestContext.authentication.clientCert`; the Lambda maps its SHA-256 to a principal with `reviewer` or `operator` role from DynamoDB. The role decides which commands may be called; the domain still refuses a reviewer approving their own publisher.
 - **Server TLS**: ACM certificates for `api.`, `admin.` and `registry.` subdomains, DNS-validated in the Route 53 hosted zone. The CloudFront certificate must live in `us-east-1`; the API Gateway certificates in the deployment region.
 - **The tool under test** runs in a Lambda with no network path: the subnet's route table reaches only the free S3 and DynamoDB gateway endpoints, with no NAT and no internet gateway, so the security group's egress on 443 reaches nothing else. `PATH` and `HOME` only, a timeout and an output cap. A test that tries the network fails, which is the expected result for a `network: false` tool.
-- **Only AXLR clients**: the catalog's CloudFront function and both API Lambdas answer 403 to any request whose `User-Agent` does not start with `axlr` (the console sends `AXLR-catalog`, the CLI `axlr-registry/<version>`). This is identification, not authentication: tokens and client certificates remain the real checks; the gate keeps scanners, browsers and misdirected traffic from reaching the code.
+- **Only AXLR clients**: the catalog's CloudFront function and both API Lambdas answer 403 to any request whose `User-Agent` does not start with `axlr` (the console sends `AXLR-catalog`, the CLI `axlr-registry/<version>`). This is identification, not authentication: request signatures and client certificates remain the real checks; the gate keeps scanners, browsers and misdirected traffic from reaching the code.
 - **Rate limits and floods**: AWS Shield Standard covers CloudFront and Route 53 for free. The catalog distribution carries a web ACL (`infra/edge-waf.yaml`, us-east-1) with a per-IP rate rule (1,000 requests per five minutes) and AWS's IP reputation list, about $6 a month per environment. The HTTP APIs are throttled at the stage (publish 10 requests per second with a burst of 20, admin 5 with 10; API Gateway HTTP APIs cannot carry WAF), and every Lambda has reserved concurrency (publish 5, admin 3, runner 2, index publisher 1), which is the cost cap: a flood is throttled at the gateway, and whatever gets through cannot fan out.
 - **Least privilege**: each Lambda has its own role with the table and prefixes it touches; `index-publisher` is the only writer of `published/`; GitHub deploys through an OIDC role, with no long-lived keys.
 - **What the index does not prove**: see `domain.md`; "reviewed" is a verdict and the console says so.
@@ -123,7 +125,7 @@ infra/
 .github/workflows/         ci-dev.yml, ci-main.yml, release.yml
 ```
 
-Rules applied: a file holds one type and its implementation; every value is a newtype that validates in its constructor and cannot be built otherwise (`PublisherId`, `ToolName`, `Version`, `Digest`, `KeyId`, `TokenDigest`, `Scope`, `Severity`, `Status`…); errors are enums, not strings; use cases depend on traits; adapters depend on use cases, never the other way; a Lambda `main.rs` only wires.
+Rules applied: a file holds one type and its implementation; every value is a newtype that validates in its constructor and cannot be built otherwise (`PublisherId`, `ToolName`, `Version`, `Digest`, `KeyId`, `Nonce`, `RateLimit`, `Scope`, `Severity`, `Status`…); errors are enums, not strings; use cases depend on traits; adapters depend on use cases, never the other way; a Lambda `main.rs` only wires.
 
 ## Tests
 

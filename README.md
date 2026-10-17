@@ -6,17 +6,18 @@ AXLR and this registry are sibling projects in separate repositories. This one n
 
 | Where | What |
 |:--|:--|
-| [`docs/domain.md`](docs/domain.md) | The domain: publishers, keys and scoped tokens, bundles and digests, publisher signatures, the policy scan, the version state machine, tools, the signed index, key revocation |
+| [`docs/domain.md`](docs/domain.md) | The domain: publishers and their keys, bundles and digests, publisher signatures, the policy scan, the version state machine, tools, the signed index, key revocation |
 | [`docs/architecture.md`](docs/architecture.md) | Hosting (Lambda, DynamoDB, S3, CloudFront, Route 53, mTLS), data model, security, cost, code layout, tests, delivery |
 | [`crates/domain`](crates/domain/) | The domain crate: pure, one type per file, every value a validated newtype |
 | [`crates/application`](crates/application/) | Ports (traits) and use cases, one per file |
-| [`docs/api.md`](docs/api.md) | The HTTP routes and bodies as the CLI speaks them and the API Lambdas serve them, and the three the admin API does not serve yet |
-| [`docs/operations.md`](docs/operations.md) | The offline CA, client certificates and their SHA-256, the truststore bucket and version, the us-east-1 CloudFront certificate, CA rotation |
+| [`docs/api.md`](docs/api.md) | The HTTP routes and bodies as the CLI speaks them and the API Lambdas serve them: signed requests, enrolment, approval, rate limits |
+| [`docs/client-identity.md`](docs/client-identity.md) | The client identity contract: one Ed25519 key per publisher, self-service enrolment, signed requests, per-key rate limits |
+| [`docs/operations.md`](docs/operations.md) | The offline CA, client certificates and their SHA-256, the truststore bucket and version, the us-east-1 CloudFront certificate, CA rotation, publisher enrolment and approval |
 | [`crates/adapters/memory`](crates/adapters/memory/) | In-memory ports for tests |
-| [`crates/adapters/dynamodb`](crates/adapters/dynamodb/) | Publishers, tools, principals, the audit log and idempotency records over one DynamoDB table (condition expressions, a version lock per aggregate, GSI1 for the reviewer's queue) |
+| [`crates/adapters/dynamodb`](crates/adapters/dynamodb/) | Publishers, tools, principals, the audit log, idempotency records, used nonces and rate windows over one DynamoDB table (condition expressions, a version lock per aggregate, GSI1 for the reviewer's queue, TTL on `expires_at`) |
 | [`crates/adapters/s3`](crates/adapters/s3/) | The artifact store (`quarantine/<status>/…`, `published/tools/…`) and the index writer (`staging/index.json`, `published/index.json` + `.minisig`) |
 | [`crates/adapters/lambda`](crates/adapters/lambda/) | Asynchronous invokes of `test-runner` and `index-publisher`, the system clock, the environment |
-| [`crates/adapters/http`](crates/adapters/http/) | Request and response mapping shared by the API Lambdas: bearer tokens, the upload body, the mTLS principal, errors to status codes, routing |
+| [`crates/adapters/http`](crates/adapters/http/) | Request and response mapping shared by the API Lambdas: signed requests, the upload and enrolment bodies, the mTLS principal, errors to status codes (429 with `Retry-After`), routing |
 | [`crates/runner`](crates/runner/) | Runs a version's `tests.json` with the `axlr_run_tool` contract (PATH and HOME only, 30 s per case, 1 MiB per stream, a whole-run deadline) and records the report |
 | [`crates/cli`](crates/cli/) | `axlr-registry`: the publisher, reviewer and operator command line |
 | [`crates/lambdas/*`](crates/lambdas/) | The four Lambda entry points, each wiring the adapters above: `publish-api`, `admin-api`, `index-publisher` and `test-runner` (a container image with python3, bash and node) |
@@ -36,25 +37,31 @@ just lambdas       # cargo lambda build --release --arm64 (needs cargo-lambda)
 
 ## Routes
 
-`api.DOMAIN` (bearer token, `publish-api`):
+`api.DOMAIN` (every request signed with the publisher's key: `X-AXLR-Key`, `X-AXLR-Timestamp`, `X-AXLR-Nonce`, `X-AXLR-Signature`; `publish-api`):
 
 | Route | Body | Answer |
 |:--|:--|:--|
-| `POST /v1/versions` | `{manifest, files: {name: base64}, key_id, signature}` (base64 everywhere; `Idempotency-Key` header optional, replayed per token for a day) | `201` with the version, its status (`scanned` or `rejected`) and the scan findings |
+| `POST /v1/publishers/enroll` | `{id, public_key, namespaces, contact}`, signed with the key being enrolled | `202` `{id, status: pending, namespaces}`; an operator approves it |
+| `POST /v1/publishers/{id}/keys` | `{public_key}`, signed with one of the caller's keys | `201` `{id, key_id}` |
+| `POST /v1/versions` | `{manifest, files: {name: base64}, key_id, signature}` (base64 everywhere; `Idempotency-Key` header optional, replayed per key for a day) | `201` with the version, its status (`scanned` or `rejected`) and the scan findings |
 | `GET /v1/versions/{name}/{version}` | | `200` with status, findings, test outcome and rejection reason |
+
+Refusals of a signed request: 401 `stale`, `unknown_key`, `bad_signature`, `replay`; 403 `pending`, `suspended`; 429 `rate_limited` with `Retry-After` (60 requests per minute and 20 uploads per day per key by default, 5 enrolments per hour per address).
 
 `admin.DOMAIN` (mTLS; the principal is the client certificate's SHA-256, `admin-api`):
 
 | Route | Body | Does |
 |:--|:--|:--|
-| `POST /v1/publishers` | `{id, public_key, namespaces}` | registers a publisher (operator) |
-| `POST /v1/publishers/{id}/tokens` | `{scopes, expires_at?}` | issues a token, shown once (operator) |
+| `POST /v1/publishers` | `{id, public_key, namespaces, contact}` | registers a publisher, active at once (operator) |
+| `POST /v1/publishers/{id}/approve` | `{namespaces?}` | activates a pending or suspended publisher, optionally keeping only some namespaces (operator) |
+| `POST /v1/publishers/{id}/suspend` | `{reason?}` | blocks a publisher; its catalog entries stay (operator) |
+| `POST /v1/publishers/{id}/rate` | `{requests_per_minute?, uploads_per_day?}` | overrides its rate limits (operator) |
 | `POST /v1/publishers/{id}/keys/{key_id}/revoke` | `{mode: rotation \| compromise}` | revokes a key; compromise yanks what it signed; rebuilds the index (operator) |
 | `POST /v1/versions/{name}/{version}/approve` \| `reject` \| `yank` | `{reason}` | the review decision; approve and yank rebuild the index (reviewer or operator) |
 | `POST /v1/index/publish` | | asks `index-publisher` for a rebuild (operator) |
 | `POST /v1/index/signature` | `{signature}` (the `.minisig` text over `staging/index.json`) | verifies it against `INDEX_PUBLIC_KEY` and publishes `published/index.json` and `.minisig` (operator) |
 
-Statuses: domain `Invalid` 400, `Unauthorized` 401, `Forbidden` 403, `NotFound` 404, `Conflict` 409, a port failure 502, a body over 4 MiB 413; unknown JSON fields are refused. The upload body also carries `tests` (`tests.json`, base64), stored beside the bundle for the runner. The full bodies, and the `GET /v1/versions?status=`, `GET /v1/versions/{name}/{version}` and `GET /v1/index/staging` admin routes the CLI calls but `admin-api` does not serve yet, are in [`docs/api.md`](docs/api.md).
+Statuses: domain `Invalid` 400, `Unauthorized` 401, `Forbidden` 403, `NotFound` 404, `Conflict` 409, a port failure 502, a body over 4 MiB 413; unknown JSON fields are refused. The upload body also carries `tests` (`tests.json`, base64), stored beside the bundle for the runner. The full bodies and the signed-request message are in [`docs/api.md`](docs/api.md).
 
 ## The command line
 
@@ -62,13 +69,18 @@ Statuses: domain `Invalid` 400, `Unauthorized` 401, `Forbidden` 403, `NotFound` 
 
 | Command | Does |
 |:--|:--|
-| `publisher keygen [--out publisher.key]` | an Ed25519 key: the secret (mode 0600) and `<out>.pub`, which the operator registers |
+| `publisher keygen [--out publisher.key]` | an Ed25519 key: the secret (mode 0600) and `<out>.pub`; it signs bundles and every request |
+| `publisher identity --key <key>` | the public key and key id |
+| `publisher enroll --id <id> --namespace <scope>… --contact <email> --key <key> --url https://api.DOMAIN` | self-service enrolment, pending until an operator approves it |
 | `publisher sign <tool dir> --key <key> [--out sig.json]` | validates the directory as the registry will (manifest, files, `tests.json` beside them) and prints the bundle digest and the signature |
-| `publisher upload <tool dir> --token-file <file> --url https://api.DOMAIN (--key <key> \| --signature sig.json)` | `POST /v1/versions` with the manifest, files, tests and signature; prints the outcome |
+| `publisher upload <tool dir> --key <key> --url https://api.DOMAIN [--signature sig.json]` | `POST /v1/versions` with the manifest, files, tests and signature; prints the outcome |
+| `publisher status <name> <version> --key <key> --url https://api.DOMAIN` | what became of an upload |
 | `review list [--status scanned]`, `review show <name> <version>` | the queue and one version's scan, tests and review |
 | `review approve\|reject\|yank <name> <version> --reason …` | the decision |
-| `operator register-publisher --id <id> --public-key <file.pub> --namespace <scope>…` | a publisher with its first key and namespaces |
-| `operator issue-token --publisher <id> --scope <scope>… [--expires <RFC 3339>]` | a bearer token, shown once |
+| `operator register-publisher --id <id> --public-key <file.pub> --namespace <scope>… --contact <email>` | a publisher the operator vouches for, active at once |
+| `operator approve-publisher --id <id> [--namespace <scope>…]` | activates an enrolled (or suspended) publisher, optionally keeping only some namespaces |
+| `operator suspend-publisher --id <id> [--reason …]` | blocks a publisher |
+| `operator set-rate --publisher <id> [--requests-per-minute N] [--uploads-per-day N]` | overrides its rate limits; an omitted flag restores the default |
 | `operator revoke-key --publisher <id> --key-id <16 hex> --mode rotation\|compromise` | revokes a key; compromise yanks what it signed |
 | `operator publish-index` | rebuilds the unsigned index in staging |
 | `operator fetch-index [--out index.json]` | downloads the staging index to sign |

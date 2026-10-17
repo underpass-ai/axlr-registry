@@ -1,6 +1,6 @@
 # Tool registry domain: a small artifact manager for pre-forged tools
 
-Status: proposed (17 Oct 2026); the Rust crate [`crates/domain`](../crates/domain/) implements the model below, one type per file, with its invariants tested; [`crates/application`](../crates/application/) holds the ports and use cases. The hosting is in [`architecture.md`](architecture.md). Decided with Tirso on 17 Oct 2026: publisher identity is an Ed25519 key plus a scoped API token (no delegated OAuth); one channel, `official`, in the first version; the registry is a separate `axlr-registry` binary with file state, and the key that signs the index is kept off the server. This repository is the registry service; the console side (install, `/tools`, the signed-index client) lives in the AXLR repository, whose `docs/plans/2026-10-16-tool-registry-design.md` describes the read side and `docs/plans/2026-10-16-prebuilt-tools-catalog.md` the tools. The two are sibling projects: this one never imports AXLR, and the index format is the contract between them.
+Status: proposed (17 Oct 2026); the Rust crate [`crates/domain`](../crates/domain/) implements the model below, one type per file, with its invariants tested; [`crates/application`](../crates/application/) holds the ports and use cases. The hosting is in [`architecture.md`](architecture.md). Decided with Tirso on 17 Oct 2026: publisher identity is one Ed25519 key per publisher that signs bundles and requests (no tokens, no delegated OAuth; [`client-identity.md`](client-identity.md)); one channel, `official`, in the first version; the registry is a separate `axlr-registry` binary with file state, and the key that signs the index is kept off the server. This repository is the registry service; the console side (install, `/tools`, the signed-index client) lives in the AXLR repository, whose `docs/plans/2026-10-16-tool-registry-design.md` describes the read side and `docs/plans/2026-10-16-prebuilt-tools-catalog.md` the tools. The two are sibling projects: this one never imports AXLR, and the index format is the contract between them.
 
 ## Intent
 
@@ -19,7 +19,9 @@ The registry owns publishers, tools, versions, reviews and index snapshots. It d
 | Aggregate or value | Fields | Invariants |
 |:--|:--|:--|
 | `PublisherID` | `[a-z0-9][a-z0-9-]{1,31}` | unique |
-| `Publisher` | keys (`KeyID` = first 16 hex of SHA-256 of the public key, Ed25519 public key, status active or revoked), tokens (SHA-256 digest of the token, scopes, expiry), namespaces | a token authorises a tool name only when one of its scopes matches (exact name or `prefix_*`) and the name is inside the publisher's namespaces; a revoked key never verifies again; a token is never stored, only its digest |
+| `Publisher` | status (`pending → active ⇄ suspended`), contact, keys (`KeyID` = first 16 hex of SHA-256 of the public key, Ed25519 public key, active or revoked), namespaces (exact names or `prefix_*`), rate overrides | only an active publisher publishes, and only names inside its namespaces; an approval may narrow the namespaces, never widen them; a revoked key never verifies again; a key id belongs to one publisher |
+| `RequestSignature` | key id, timestamp, `Nonce` (16 bytes), 64-byte Ed25519 signature over the canonical request (`axlr-request-v1`, method, path, query, body SHA-256, timestamp, nonce) | fresh within ±300 s; a nonce is accepted once per key; verifies with an active key of an active publisher |
+| `RateLimit`, `RateWindow` | a positive count; a minute, hour or UTC-day window aligned to the clock | 60 requests per minute and 20 uploads per day per key unless overridden, 5 enrolments per hour per address |
 | `ToolName` | the forged-tool rule `^[a-z][a-z0-9_]{1,47}$` | one owner for life; a name is reserved to its publisher at the first accepted submission |
 | `Version` | semver `MAJOR.MINOR.PATCH` | a new version is strictly greater than every version the tool already has, approved or not |
 | `Bundle` | `manifest.json` bytes plus one to eight files | the manifest is a forged tool plus its `catalog` block; `args` names one of the files; file names are `[A-Za-z0-9_.-]+` with no path; text only (no NUL byte), at most 256 KiB each; `BundleDigest` = SHA-256 of the canonical listing `manifest <digest>` then `file <name> <digest>` sorted |
@@ -49,17 +51,20 @@ A scan is a pure function of the bundle, so the same bundle always yields the sa
 
 | Command | Actor | Preconditions | Result and event |
 |:--|:--|:--|:--|
-| `RegisterPublisher` | registry operator | id unused | `Publisher` with its first key and namespaces; `PublisherRegistered` |
-| `IssueToken` | operator or the publisher with an admin token | | token shown once; only its digest kept; `TokenIssued` |
-| `RevokeKey`, `RevokeToken` | operator or publisher | | `KeyRevoked` (carried in the next index) |
-| `Submit` | publisher (token) | token scope covers the name; name unowned or owned by this publisher; version greater than the latest; bundle valid; signature verifies | `ToolVersion` in `submitted`; `VersionSubmitted` |
+| `RegisterPublisher` | registry operator | id unused | active `Publisher` with its first key, namespaces and contact; `PublisherRegistered` |
+| `EnrollPublisher` | the publisher, signed with the key being enrolled | id unused or pending | pending `Publisher`; `PublisherEnrolled` |
+| `ApprovePublisher`, `SuspendPublisher`, `SetPublisherRate` | operator | pending or suspended → active; active → suspended | status or limits changed; `PublisherApproved` / `PublisherSuspended` |
+| `AddPublisherKey` | the publisher, signed with one of its keys | key id unused | another key; `KeyAdded` |
+| `AuthenticateRequest` | registry, before every publish route | the ordered checks of `client-identity.md` §3 | the publisher and the key, or the exact refusal |
+| `RevokeKey` | operator | | `KeyRevoked` (carried in the next index) |
+| `Submit` | publisher (authenticated request) | publisher active and the name inside its namespaces; name unowned or owned by this publisher; version greater than the latest; bundle valid; signature verifies | `ToolVersion` in `submitted`; `VersionSubmitted` |
 | `Scan` | registry (automatic) | `submitted` | `scanned` with the report, or `rejected` when a finding blocks; `VersionScanned` / `VersionRejected` |
 | `RunTests` | registry (sandbox adapter: bubblewrap, no network, `PATH` and `HOME` only) | `scanned` | `TestReport` attached; `TestsRecorded` |
 | `Approve`, `Reject` | reviewer (a principal with the `reviewer` role, not the publisher) | `scanned`, clean, tests passed | `approved` / `rejected`; `VersionApproved` / `VersionRejected` |
 | `Yank` | reviewer or operator | `approved` | `yanked` with the reason; `VersionYanked` |
 | `PublishIndex` | registry, after every approval or yank | | `IndexSnapshot` canonical bytes handed to the signing port; `IndexPublished` with the index digest |
 
-Authentication and roles live in the adapters (an HTTP API with bearer tokens for publishers and mTLS or a local socket for reviewers and the operator): the adapter enforces who may call which command, and the domain enforces state, ownership, signatures and the rule that a reviewer is not the version's publisher. The registry key never sits on the API host: `PublishIndex` writes the unsigned canonical index and a separate signing step (a CLI with the key, or a CI job) produces `index.json.minisig`; the console refuses an index without a valid signature, so an unsigned publish is harmless.
+Authentication and roles live in the adapters and use cases (an HTTP API with signed requests for publishers and mTLS for reviewers and the operator): the adapter enforces who may call which command, and the domain enforces state, ownership, signatures and the rule that a reviewer is not the version's publisher. The registry key never sits on the API host: `PublishIndex` writes the unsigned canonical index and a separate signing step (a CLI with the key, or a CI job) produces `index.json.minisig`; the console refuses an index without a valid signature, so an unsigned publish is harmless.
 
 ## Key revocation: rotation or compromise
 
@@ -84,4 +89,4 @@ Multiple channels, delegated identity (GitHub), download counts, dependency reso
 
 ## Verification
 
-`cargo test --workspace` covers: token scope and expiry, revoked keys, bundle validation (path traversal, `args` outside the files, nine files, a binary file), signature verification and tampering, every scan rule with the block/warn split by the `network` declaration, the version state machine (approval refused without a clean scan or passing tests or by the publisher, yank only when approved, version ordering, immutability), and the index (only approved and non-yanked versions, revocations carried, canonical bytes stable and carrying the fields the console client reads).
+`cargo test --workspace` covers: the publisher status machine and namespace narrowing, the canonical request message and a pinned signature vector, every check of a signed request in order with the minute, day and per-address windows, revoked keys, bundle validation (path traversal, `args` outside the files, nine files, a binary file), signature verification and tampering, every scan rule with the block/warn split by the `network` declaration, the version state machine (approval refused without a clean scan or passing tests or by the publisher, yank only when approved, version ordering, immutability), and the index (only approved and non-yanked versions, revocations carried, canonical bytes stable and carrying the fields the console client reads).

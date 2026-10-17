@@ -1,4 +1,4 @@
-# Operations: the private CA, client certificates, the truststore and the CloudFront certificate
+# Operations: the private CA, client certificates, the truststore, the CloudFront certificate, and publishers
 
 Status: written 17 Oct 2026, before any deployment. These are the steps the operator runs once per environment, before the first `sam deploy`, and again when something rotates. The architecture that needs them is in [`architecture.md`](architecture.md) (bootstrap order, security). The local parts are scripted in [`scripts/ca.sh`](../scripts/ca.sh); the AWS parts are plain `aws` commands, listed here and never run by the script. Nothing below has been run against an AWS account yet.
 
@@ -147,9 +147,30 @@ Rotate on a schedule (before the ten years) or at once if `ca.key` may have leak
 
 In a compromise, skip the overlap: go straight to step 4 with the new CA, accept the outage until the new certificates are handed out, and delete every principal row that was keyed by an old certificate.
 
+## 8. Publishers: enrolment and approval
+
+Publishers hold one Ed25519 key each and sign every request with it ([`client-identity.md`](client-identity.md)); there are no tokens. Two ways in:
+
+- **Self-service.** The publisher runs `axlr-registry publisher keygen` (or the console's `/tools keygen`) and `axlr-registry publisher enroll --id acme --namespace 'acme_*' --contact ops@acme.example --key publisher.key --url https://api.DOMAIN`. The registry records the publisher as `pending`; nothing else it signs is accepted (403 `pending`). The operator checks the contact and the namespaces, then approves:
+
+  ```bash
+  axlr-registry operator approve-publisher --id acme --url https://admin.DOMAIN --cert clients/ops/identity.pem
+  # keep only some of the enrolled namespaces:
+  axlr-registry operator approve-publisher --id acme --namespace 'acme_*' ...
+  ```
+
+  A pending id that enrols again replaces its request (same key or a new one), so a publisher who lost the key before approval just enrols again. Enrolments are limited to five per hour per source address.
+
+- **Vouched for.** The operator registers a publisher from its public key file, active at once: `axlr-registry operator register-publisher --id e2e --public-key e2e.key.pub --namespace 'e2e_*' --contact ci@example --url … --cert …`. This is how the end-to-end publisher of the release job exists: it is pre-approved and never enrols. Its secret key is the `STAGING_E2E_PUBLISHER_KEY` secret (the contents of the key file); the old `STAGING_E2E_TOKEN` secret is deleted and the release job now gates the e2e test on the key.
+
+Afterwards: `suspend-publisher --id acme --reason …` blocks a publisher (uploads refused with 403 `suspended`, catalog entries untouched) and `approve-publisher` lifts it; `set-rate --publisher acme --requests-per-minute 600 --uploads-per-day 50` overrides the per-key limits (60 per minute and 20 per day by default; omit a flag to restore its default); `revoke-key` is unchanged. A publisher adds a second key itself (`POST /v1/publishers/{id}/keys`, signed with the first); the operator-side `add-key` of the contract is not served yet.
+
+Re-bootstrapping a stack that ran with tokens: the publisher META items lack `status`, `contact` and the rate attributes, and no key has its `KEYID#` pointer, so the old records do not load. Delete each publisher's items (the `PUB#<id>` partition and the `TOKEN#` pointers) and register the publishers again with `register-publisher`; the e2e publisher keeps its key file. Used nonces and rate windows live in `NONCE#` and `RATE#` items that the table's TTL on `expires_at` removes.
+
 ## Follow-ups
 
 - A `register-principal` command over the admin API would replace the `put-item` in step 3 once the first operator exists; today `PrincipalRepository` is read-only.
+- An operator `add-key` route, and a migration for publisher items written before signed requests (step 8 registers them again instead).
 - API Gateway's mTLS checks the chain only; expired client certificates are refused but there is no revocation list. The principals table is the revocation list.
 
 ## GitHub deploy role (OIDC)
