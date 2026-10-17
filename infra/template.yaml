@@ -191,7 +191,7 @@ Resources:
     Type: AWS::Serverless::Function
     Metadata:
       BuildMethod: rust-cargolambda
-      BuildProperties: { Binary: bootstrap, PackageName: publish-api }
+      BuildProperties: { Binary: publish-api, PackageName: publish-api }
     Properties:
       Runtime: provided.al2023
       CodeUri: ../
@@ -215,7 +215,7 @@ Resources:
     Type: AWS::Serverless::Function
     Metadata:
       BuildMethod: rust-cargolambda
-      BuildProperties: { Binary: bootstrap, PackageName: admin-api }
+      BuildProperties: { Binary: admin-api, PackageName: admin-api }
     Properties:
       Runtime: provided.al2023
       CodeUri: ../
@@ -242,7 +242,7 @@ Resources:
     Type: AWS::Serverless::Function
     Metadata:
       BuildMethod: rust-cargolambda
-      BuildProperties: { Binary: bootstrap, PackageName: index-publisher }
+      BuildProperties: { Binary: index-publisher, PackageName: index-publisher }
     Properties:
       Runtime: provided.al2023
       CodeUri: ../

@@ -8,7 +8,7 @@ license.workspace = true
 publish = false
 
 [[bin]]
-name = "bootstrap"
+name = "index-publisher"
 path = "src/main.rs"
 
 [dependencies]
