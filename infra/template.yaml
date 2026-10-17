@@ -298,7 +298,7 @@ Resources:
   RunnerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: test-runner; the subnet's route table reaches only the gateway endpoints, so 443 anywhere is 443 to S3 and DynamoDB
+      GroupDescription: test-runner. The subnet route table reaches only the gateway endpoints, so 443 anywhere is 443 to S3 and DynamoDB
       VpcId: !Ref Vpc
       SecurityGroupEgress:
         - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0 }
