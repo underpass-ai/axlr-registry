@@ -62,11 +62,14 @@ impl RateWindow {
         }
     }
 
-    /// Whole seconds until the window holding `now` ends, at least one:
-    /// the `Retry-After` of a refusal.
+    /// Seconds until the window holding `now` ends, rounded up and at
+    /// least one: the `Retry-After` of a refusal, so a client that waits
+    /// exactly that long lands in the next window.
     pub fn retry_after(self, now: Timestamp) -> u64 {
         let left = self.ends_at(now) - now;
-        u64::try_from(left.whole_seconds()).unwrap_or(0).max(1)
+        let whole = u64::try_from(left.whole_seconds()).unwrap_or(0);
+        let partial = u64::from(left.subsec_nanoseconds() > 0);
+        (whole + partial).max(1)
     }
 }
 
@@ -84,10 +87,12 @@ mod tests {
         assert_eq!(RateWindow::Day.id(now), "day#2026-10-17");
         assert_eq!(RateWindow::Minute.ends_at(now), datetime!(2026-10-17 12:06 UTC));
         assert_eq!(RateWindow::Day.ends_at(now), datetime!(2026-10-18 00:00 UTC));
-        assert_eq!(RateWindow::Minute.retry_after(now), 17);
-        assert_eq!(RateWindow::Hour.retry_after(now), 54 * 60 + 17);
-        assert_eq!(RateWindow::Day.retry_after(now), 11 * 3600 + 54 * 60 + 17);
+        assert_eq!(RateWindow::Minute.retry_after(now), 18, "rounded up");
+        assert_eq!(RateWindow::Hour.retry_after(now), 54 * 60 + 18);
+        assert_eq!(RateWindow::Day.retry_after(now), 11 * 3600 + 54 * 60 + 18);
+        assert_eq!(RateWindow::Minute.retry_after(datetime!(2026-10-17 12:05:42 UTC)), 18, "exact seconds are not rounded");
         assert_eq!(RateWindow::Minute.retry_after(datetime!(2026-10-17 12:05:59.9 UTC)), 1, "never zero");
+        assert_eq!(RateWindow::Minute.retry_after(datetime!(2026-10-17 12:05:00 UTC)), 60);
         let offset = datetime!(2026-10-17 23:30 -02:00);
         assert_eq!(RateWindow::Day.id(offset), "day#2026-10-18", "the day is the UTC day");
         for w in [RateWindow::Minute, RateWindow::Hour, RateWindow::Day] {

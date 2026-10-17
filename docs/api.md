@@ -78,15 +78,7 @@ Mutual TLS with a certificate from the private CA (`operations.md`); API Gateway
 
 The signature the operator uploads is what `axlr-registry operator sign-index` writes: minisign's prehashed form (`ED`, BLAKE2b-512 of the index), the key id, the trusted comment and the global signature, the form the AXLR console's `minisign.go` verifies and `minisign -V` accepts.
 
-### Routes the CLI calls that `admin-api` does not serve yet
-
-| Method and path | Called by | Expected answer |
-|:--|:--|:--|
-| `GET /v1/versions?status=scanned` | `review list` | `200` a list of version reports (the same shape as `GET /v1/versions/{name}/{version}` below), oldest submission first; `status` any of the five, `scanned` (the default) being the reviewer's queue (GSI1); `400` for another value |
-| `GET /v1/versions/{name}/{version}` | `review show` | `200` `{name, version, status, submitted_at, findings, tests_passed, failed_tests, rejected_reason}`; `404` when unknown |
-| `GET /v1/index/staging` | `operator fetch-index` | `200` the unsigned canonical `index.json` bytes (`application/json`), read from `staging/index.json`; `404` before the first publish; operators only |
-
-Until they exist the CLI gets a `404`; a reviewer can still approve a version named by the publisher, and the operator can read `staging/index.json` from the bucket. Adding them is a follow-up in `AdminRoute` and `AdminApi`.
+The three `GET` routes the CLI's `review list`, `review show` and `operator fetch-index` call are served too: `GET /v1/versions[?status=]` (the reviewer's queue, oldest first, `scanned` by default; `400` for another value), `GET /v1/versions/{name}/{version}` (the same report as the publisher's view; `404` when unknown) and `GET /v1/index/staging` (the unsigned canonical `index.json`; `404` before the first publish; operators only).
 
 ### Not served yet
 
