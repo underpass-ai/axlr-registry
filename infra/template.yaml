@@ -238,12 +238,11 @@ Resources:
         Variables:
           TEST_RUNNER_FUNCTION: !Ref TestRunnerFunction
       Events:
-        Upload:
+        # The Lambda routes: POST /v1/versions, GET /v1/versions/{name}/{version},
+        # POST /v1/publishers/enroll, POST /v1/publishers/{id}/keys (docs/api.md).
+        Publish:
           Type: HttpApi
-          Properties: { ApiId: !Ref PublishApi, Path: /v1/versions, Method: POST }
-        Status:
-          Type: HttpApi
-          Properties: { ApiId: !Ref PublishApi, Path: '/v1/versions/{name}/{version}', Method: GET }
+          Properties: { ApiId: !Ref PublishApi, Path: '/v1/{proxy+}', Method: ANY }
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref Table }
         - S3WritePolicy: { BucketName: !Ref Artifacts }
