@@ -131,7 +131,7 @@ Rules applied: a file holds one type and its implementation; every value is a ne
 | Use case: each command against the in-memory adapters | `crates/application` | every push and pull request |
 | Adapter integration: DynamoDB Local and MinIO as job services | `crates/adapters/*` behind a `integration` feature | merges to `main` |
 | Contract: the canonical index decodes with the fields the AXLR console reads | `crates/domain` | every push |
-| End to end: a signed bundle through publish, scan, tests, review and index against the deployed `staging` stack | `tests/e2e` | release job, before promotion |
+| End to end: a signed fixture under a fresh version through upload, scan, sandbox tests, approval and the staging index, then yanked, against the deployed `staging` stack | `crates/e2e` (`cargo test -p registry-e2e -- --ignored`) | release job, before promotion |
 | Coverage: `cargo llvm-cov --fail-under-lines 80`, Lambda `main.rs` files excluded; the SDK adapters count once their integration tests run under `llvm-cov` in the same job, so the gate stays honest when they land | workspace | merges to `main` |
 
 ## Delivery

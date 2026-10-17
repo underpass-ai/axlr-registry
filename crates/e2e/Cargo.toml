@@ -1,0 +1,22 @@
+[package]
+name = "registry-e2e"
+description = "End-to-end test of a deployed axlr-registry stack: a signed bundle through upload, scan, tests, review and the staging index"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+axlr-registry-cli = { path = "../cli" }
+registry-domain.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -81,9 +81,17 @@ jobs:
           REGISTRY_E2E_PUBLISH_URL: https://api.${{ vars.STAGING_DOMAIN }}
           REGISTRY_E2E_ADMIN_URL: https://admin.${{ vars.STAGING_DOMAIN }}
           REGISTRY_E2E_TOKEN: ${{ secrets.STAGING_E2E_TOKEN }}
-          REGISTRY_E2E_CLIENT_CERT: ${{ secrets.STAGING_E2E_CLIENT_CERT }}
-          REGISTRY_E2E_CLIENT_KEY: ${{ secrets.STAGING_E2E_CLIENT_KEY }}
-        run: echo "tests/e2e not written yet; wire it here"
+          # A publisher key file from `axlr-registry publisher keygen`, registered for the e2e publisher with namespace e2e_*.
+          STAGING_E2E_PUBLISHER_KEY: ${{ secrets.STAGING_E2E_PUBLISHER_KEY }}
+          # A reviewer-and-operator identity PEM (clients/<id>/identity.pem from scripts/ca.sh) registered as a principal.
+          STAGING_E2E_CLIENT_IDENTITY: ${{ secrets.STAGING_E2E_CLIENT_IDENTITY }}
+        run: |
+          umask 077
+          printf '%s' "$STAGING_E2E_PUBLISHER_KEY" > "$RUNNER_TEMP/publisher.key"
+          printf '%s' "$STAGING_E2E_CLIENT_IDENTITY" > "$RUNNER_TEMP/identity.pem"
+          REGISTRY_E2E_PUBLISHER_KEY="$RUNNER_TEMP/publisher.key" REGISTRY_E2E_CLIENT_CERT="$RUNNER_TEMP/identity.pem" \
+            cargo test -p registry-e2e --test deployed_stack -- --ignored
+          rm -f "$RUNNER_TEMP/publisher.key" "$RUNNER_TEMP/identity.pem"
 
   deploy-production:
     needs: deploy-staging

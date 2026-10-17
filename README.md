@@ -21,6 +21,7 @@ AXLR and this registry are sibling projects in separate repositories. This one n
 | [`crates/cli`](crates/cli/) | `axlr-registry`: the publisher, reviewer and operator command line |
 | [`crates/lambdas/*`](crates/lambdas/) | The four Lambda entry points, each wiring the adapters above: `publish-api`, `admin-api`, `index-publisher` and `test-runner` (a container image with python3, bash and node) |
 | [`scripts/ca.sh`](scripts/ca.sh) | The local parts of `docs/operations.md`: init, issue, fingerprint, truststore, rotate, retire |
+| [`crates/e2e`](crates/e2e/) | The end-to-end scenario the release job runs against the staging stack (ignored unless `REGISTRY_E2E_*` is set) |
 | [`infra/template.yaml`](infra/template.yaml) | The SAM template |
 | [`.github/workflows`](.github/workflows/) | `ci-dev` (every push), `ci-main` (merges: coverage gate, audit, integration, Lambda build), `release` (tags: build, staging, e2e, production) |
 

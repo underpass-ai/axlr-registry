@@ -10,6 +10,7 @@ members = [
     "crates/adapters/http",
     "crates/runner",
     "crates/cli",
+    "crates/e2e",
     "crates/lambdas/publish-api",
     "crates/lambdas/admin-api",
     "crates/lambdas/test-runner",
