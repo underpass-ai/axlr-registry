@@ -9,7 +9,5 @@ RUN dnf install -y python3 bash nodejs && dnf clean all
 # /tmp/axlr-registry/<name>/<version>/ (crates/lambdas/test-runner).
 ENV HOME=/tmp
 
-# The bootstrap binary is produced by `cargo lambda build --release --arm64 -p test-runner`
-# in CI and copied in; locally, run that first.
-COPY target/lambda/test-runner/bootstrap ${LAMBDA_RUNTIME_DIR}/bootstrap
+COPY bootstrap ${LAMBDA_RUNTIME_DIR}/bootstrap
 CMD ["bootstrap"]

@@ -70,7 +70,7 @@ jobs:
           tool: cargo-lambda
       - uses: aws-actions/setup-sam@v2
       # The runner image copies target/lambda/test-runner/bootstrap, so that binary is built first.
-      - run: cargo lambda build --release --arm64 -p test-runner
+      - run: cargo lambda build --release --arm64 -p test-runner && cp target/lambda/test-runner/bootstrap infra/test-runner/bootstrap
       - run: sam build --template-file infra/template.yaml
       - name: Is the e2e token set?
         env:
@@ -120,7 +120,7 @@ jobs:
           tool: cargo-lambda
       - uses: aws-actions/setup-sam@v2
       # The runner image copies target/lambda/test-runner/bootstrap, so that binary is built first.
-      - run: cargo lambda build --release --arm64 -p test-runner
+      - run: cargo lambda build --release --arm64 -p test-runner && cp target/lambda/test-runner/bootstrap infra/test-runner/bootstrap
       - run: sam build --template-file infra/template.yaml
       - name: Deploy production
         run: >

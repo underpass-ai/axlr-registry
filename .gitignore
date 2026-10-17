@@ -1,3 +1,4 @@
 target/
 .aws-sam/
 *.minisig.tmp
+infra/test-runner/bootstrap

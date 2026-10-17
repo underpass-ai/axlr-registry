@@ -259,8 +259,8 @@ Resources:
     Type: AWS::Serverless::Function
     Metadata:
       DockerTag: latest
-      DockerContext: ../
-      Dockerfile: infra/test-runner/Dockerfile
+      DockerContext: ./test-runner   # holds the Dockerfile and the bootstrap binary copied in before sam build
+      Dockerfile: Dockerfile
     Properties:
       PackageType: Image
       Timeout: 120

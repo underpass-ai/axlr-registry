@@ -32,5 +32,7 @@ lambdas:
     cargo lambda build --release --arm64 --workspace
 
 deploy stage="staging":
+    cargo lambda build --release --arm64 -p test-runner
+    cp target/lambda/test-runner/bootstrap infra/test-runner/bootstrap
     sam build --template-file infra/template.yaml
     sam deploy --stack-name axlr-registry-{{stage}} --guided
