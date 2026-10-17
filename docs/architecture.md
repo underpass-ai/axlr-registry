@@ -136,7 +136,7 @@ Rules applied: a file holds one type and its implementation; every value is a ne
 
 ## Delivery
 
-GitHub's arm64 runners (`ubuntu-24.04-arm`) are free for public repositories, which this one is meant to be; a private repository would build on x86 and cross-compile with `cargo lambda build --arm64`. The deploy jobs run `sam build` (cargo-lambda for the three binaries, Docker for the runner image) before `sam deploy`; `ci-main` lints the template with `sam validate --lint`.
+GitHub's arm64 runners (`ubuntu-24.04-arm`) are free for public repositories, which this one is meant to be; a private repository would build on x86 and cross-compile with `cargo lambda build --arm64`. The release job builds the four binaries once (`build`), builds and pushes the runner image only when its Dockerfile or binary changed (`runner-image`, tag = their hash, referenced by digest), and the deploy jobs run `sam deploy` on those prebuilt artifacts with no compile of their own; `ci-main` lints the template with `sam validate --lint`. Every job has a timeout, and the production job does not exist until `PRODUCTION_DOMAIN` is set, so a run never waits.
 
 - `ci-dev.yml` (push to any branch, pull requests): `cargo fmt --check`, `cargo clippy --all-targets -D warnings`, `cargo test --workspace`. Minutes, with the registry and `target/` cached.
 - `ci-main.yml` (push to `main`): the above, then `cargo llvm-cov` with the 80 % gate, `cargo deny check` (licences, advisories, duplicate crates), the integration tests with service containers, and `cargo lambda build --release --arm64` to prove every binary builds for the target.

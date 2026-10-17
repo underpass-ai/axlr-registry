@@ -24,6 +24,9 @@ Parameters:
   CatalogName:
     Type: String
     Default: axlr
+  TestRunnerImageUri:
+    Type: String
+    Description: The test-runner image in ECR, by digest (built and pushed by the release job only when infra/test-runner or the runner binary changes).
   IndexPublicKey:
     Type: String
     Description: The registry's minisign public key (the base64 line of its .pub file); admin-api verifies uploaded index signatures against it. The secret key stays offline.
@@ -189,12 +192,9 @@ Resources:
   # ------------------------------------------------------------- Lambdas
   PublishFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: rust-cargolambda
-      BuildProperties: { Binary: publish-api, PackageName: publish-api }
     Properties:
       Runtime: provided.al2023
-      CodeUri: ../
+      CodeUri: ../target/lambda/publish-api/   # bootstrap built by `cargo lambda build --release --arm64 --workspace` (the release job's build artifact)
       Handler: bootstrap
       Environment:
         Variables:
@@ -213,12 +213,9 @@ Resources:
 
   AdminFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: rust-cargolambda
-      BuildProperties: { Binary: admin-api, PackageName: admin-api }
     Properties:
       Runtime: provided.al2023
-      CodeUri: ../
+      CodeUri: ../target/lambda/admin-api/   # bootstrap built by `cargo lambda build --release --arm64 --workspace` (the release job's build artifact)
       Handler: bootstrap
       Environment:
         Variables:
@@ -240,12 +237,9 @@ Resources:
 
   IndexPublisherFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: rust-cargolambda
-      BuildProperties: { Binary: index-publisher, PackageName: index-publisher }
     Properties:
       Runtime: provided.al2023
-      CodeUri: ../
+      CodeUri: ../target/lambda/index-publisher/   # bootstrap built by `cargo lambda build --release --arm64 --workspace` (the release job's build artifact)
       Handler: bootstrap
       Timeout: 120
       Policies:
@@ -257,12 +251,9 @@ Resources:
   # free gateway endpoints to S3 and DynamoDB. A tool under test has no network.
   TestRunnerFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      DockerTag: latest
-      DockerContext: ./test-runner   # holds the Dockerfile and the bootstrap binary copied in before sam build
-      Dockerfile: Dockerfile
     Properties:
       PackageType: Image
+      ImageUri: !Ref TestRunnerImageUri
       Timeout: 120
       MemorySize: 512
       VpcConfig:

@@ -31,8 +31,17 @@ coverage-all:
 lambdas:
     cargo lambda build --release --arm64 --workspace
 
-deploy stage="staging":
-    cargo lambda build --release --arm64 -p test-runner
+# Local deploy, the same steps the release job runs: binaries, the runner image (pushed only
+# when its tag is new) and sam deploy with prebuilt artifacts. Needs cargo-lambda, docker, sam.
+deploy stage="staging" region="eu-south-2" account="203918869295":
+    cargo lambda build --release --arm64 --workspace
     cp target/lambda/test-runner/bootstrap infra/test-runner/bootstrap
-    sam build --template-file infra/template.yaml
-    sam deploy --stack-name axlr-registry-{{stage}} --guided
+    aws ecr get-login-password --region {{region}} | docker login --username AWS --password-stdin {{account}}.dkr.ecr.{{region}}.amazonaws.com
+    TAG=$(cat infra/test-runner/Dockerfile infra/test-runner/bootstrap | sha256sum | cut -c1-32); \
+    REPO={{account}}.dkr.ecr.{{region}}.amazonaws.com/axlr-registry/test-runner; \
+    aws ecr describe-images --region {{region}} --repository-name axlr-registry/test-runner --image-ids imageTag=$TAG >/dev/null 2>&1 \
+      || (docker build --platform linux/arm64 -t $REPO:$TAG infra/test-runner && docker push $REPO:$TAG); \
+    DIGEST=$(aws ecr describe-images --region {{region}} --repository-name axlr-registry/test-runner --image-ids imageTag=$TAG --query 'imageDetails[0].imageDigest' --output text); \
+    sam deploy --template-file infra/template.yaml --stack-name axlr-registry-{{stage}} --region {{region}} --resolve-s3 \
+      --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset --guided \
+      --parameter-overrides Stage={{stage}} TestRunnerImageUri=$REPO@$DIGEST

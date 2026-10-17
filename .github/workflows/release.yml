@@ -19,6 +19,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -42,47 +43,88 @@ jobs:
           (cd dist && sha256sum * > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: release-${{ github.ref_name }}
-          path: |
-            dist/
-            target/lambda/
+          name: lambdas-${{ github.ref_name }}
+          path: target/lambda/*/bootstrap
+          retention-days: 7
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           generate_release_notes: true
 
-  deploy-staging:
+
+  runner-image:
+    # The runner image changes only when its Dockerfile or binary does: the tag is their hash,
+    # and an existing tag in ECR is reused without a build.
     needs: build
-    runs-on: ubuntu-24.04-arm   # free on public repositories; the Lambdas are arm64 and sam build compiles natively here
-    environment: staging
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: ${{ steps.image.outputs.uri }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: lambdas-${{ github.ref_name }}
+          path: target/lambda
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: mlugg/setup-zig@v2   # cargo-lambda links against Amazon Linux's glibc through Zig
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - name: Build and push only when the image changed
+        id: image
+        env:
+          REPO: ${{ steps.ecr.outputs.registry }}/axlr-registry/test-runner
+        run: |
+          cp target/lambda/test-runner/bootstrap infra/test-runner/bootstrap
+          TAG=$(cat infra/test-runner/Dockerfile infra/test-runner/bootstrap | sha256sum | cut -c1-32)
+          if DIGEST=$(aws ecr describe-images --repository-name axlr-registry/test-runner --image-ids imageTag="$TAG" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null) && [ "$DIGEST" != "None" ]; then
+            echo "image $TAG exists: $DIGEST"
+          else
+            docker build --platform linux/arm64 -t "$REPO:$TAG" infra/test-runner
+            docker push "$REPO:$TAG"
+            DIGEST=$(aws ecr describe-images --repository-name axlr-registry/test-runner --image-ids imageTag="$TAG" --query 'imageDetails[0].imageDigest' --output text)
+            echo "image $TAG pushed: $DIGEST"
+          fi
+          echo "uri=$REPO@$DIGEST" >> "$GITHUB_OUTPUT"
+
+  deploy-staging:
+    needs: [build, runner-image]
+    runs-on: ubuntu-24.04-arm   # free on public repositories
+    timeout-minutes: 40
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          version: 0.13.0
-      - uses: taiki-e/install-action@v2
+          name: lambdas-${{ github.ref_name }}
+          path: target/lambda
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
-          tool: cargo-lambda
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
       - uses: aws-actions/setup-sam@v2
-      # The runner image copies target/lambda/test-runner/bootstrap, so that binary is built first.
-      - run: cargo lambda build --release --arm64 -p test-runner && cp target/lambda/test-runner/bootstrap infra/test-runner/bootstrap
-      - run: sam build --template-file infra/template.yaml
       - name: Is the e2e token set?
         env:
           TOKEN: ${{ secrets.STAGING_E2E_TOKEN }}
         run: echo "HAS_E2E_TOKEN=$([ -n "$TOKEN" ] && echo true || echo false)" >> "$GITHUB_ENV"
       - name: Deploy staging
         run: >
-          sam deploy --stack-name axlr-registry-staging
-          --resolve-s3 --resolve-image-repos --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
-          --parameter-overrides Stage=staging DomainName=${{ vars.STAGING_DOMAIN }} HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
+          sam deploy --template-file infra/template.yaml --stack-name axlr-registry-staging
+          --resolve-s3 --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
+          --parameter-overrides Stage=staging TestRunnerImageUri=${{ needs.runner-image.outputs.image }} DomainName=${{ vars.STAGING_DOMAIN }} HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
           CloudFrontCertificateArn=${{ vars.STAGING_CLOUDFRONT_CERT_ARN }} TruststoreBucket=${{ vars.STAGING_TRUSTSTORE_BUCKET }} TruststoreVersion=${{ vars.STAGING_TRUSTSTORE_VERSION }}
           IndexPublicKey=${{ vars.STAGING_INDEX_PUBLIC_KEY }}
+      - uses: dtolnay/rust-toolchain@stable
+        if: ${{ env.HAS_E2E_TOKEN == 'true' }}
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ env.HAS_E2E_TOKEN == 'true' }}
+        with:
+          key: e2e
       - name: End-to-end test against staging
         # Skipped until the stack is bootstrapped (principals, the e2e publisher and its token).
         if: ${{ env.HAS_E2E_TOKEN == 'true' }}
@@ -103,32 +145,27 @@ jobs:
           rm -f "$RUNNER_TEMP/publisher.key" "$RUNNER_TEMP/identity.pem"
 
   deploy-production:
-    needs: deploy-staging
+    needs: [runner-image, deploy-staging]
     # Only once production is configured; until then the run ends with staging instead of waiting for an approval.
     if: ${{ vars.PRODUCTION_DOMAIN != '' }}
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
     environment: production   # requires a reviewer in the repository settings
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: lambdas-${{ github.ref_name }}
+          path: target/lambda
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: mlugg/setup-zig@v2   # cargo-lambda links against Amazon Linux's glibc through Zig
-        with:
-          version: 0.13.0
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-lambda
       - uses: aws-actions/setup-sam@v2
-      # The runner image copies target/lambda/test-runner/bootstrap, so that binary is built first.
-      - run: cargo lambda build --release --arm64 -p test-runner && cp target/lambda/test-runner/bootstrap infra/test-runner/bootstrap
-      - run: sam build --template-file infra/template.yaml
       - name: Deploy production
         run: >
-          sam deploy --stack-name axlr-registry-production
-          --resolve-s3 --resolve-image-repos --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
-          --parameter-overrides Stage=production DomainName=${{ vars.PRODUCTION_DOMAIN }} HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
+          sam deploy --template-file infra/template.yaml --stack-name axlr-registry-production
+          --resolve-s3 --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
+          --parameter-overrides Stage=production TestRunnerImageUri=${{ needs.runner-image.outputs.image }} DomainName=${{ vars.PRODUCTION_DOMAIN }} HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
           CloudFrontCertificateArn=${{ vars.PRODUCTION_CLOUDFRONT_CERT_ARN }} TruststoreBucket=${{ vars.PRODUCTION_TRUSTSTORE_BUCKET }} TruststoreVersion=${{ vars.PRODUCTION_TRUSTSTORE_VERSION }}
           IndexPublicKey=${{ vars.PRODUCTION_INDEX_PUBLIC_KEY }}
