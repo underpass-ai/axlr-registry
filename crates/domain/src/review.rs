@@ -16,6 +16,11 @@ impl Review {
         Self { reviewer, decision, reason, at }
     }
 
+    /// Rebuilds a review from storage; the repository is the only caller.
+    pub fn restore(reviewer: ReviewerId, decision: Status, reason: String, at: Timestamp) -> Self {
+        Self { reviewer, decision, reason, at }
+    }
+
     /// Who decided.
     pub fn reviewer(&self) -> &ReviewerId {
         &self.reviewer

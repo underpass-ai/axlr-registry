@@ -18,6 +18,11 @@ impl PublisherKey {
         Self { id: KeyId::of(&key), key, added_at, revoked_at: None }
     }
 
+    /// Rebuilds a key from storage; the repository is the only caller.
+    pub fn restore(key: VerifyingKey, added_at: Timestamp, revoked_at: Option<Timestamp>) -> Self {
+        Self { id: KeyId::of(&key), key, added_at, revoked_at }
+    }
+
     /// The key id.
     pub fn id(&self) -> &KeyId {
         &self.id

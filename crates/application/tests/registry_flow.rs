@@ -4,14 +4,16 @@
 use std::collections::BTreeMap;
 
 use ed25519_dalek::SigningKey;
+use registry_application::ports::{IdempotencyStore as _, IndexTrigger as _};
 use registry_application::use_cases::{
-    ApproveVersion, AuthenticatePrincipal, IssueToken, KeyRevocationMode, PublishIndex, RecordTestReport, RegisterPublisher, RejectVersion,
-    RevokeKey, SubmitVersion, YankVersion,
+    ApproveVersion, AuthenticatePrincipal, IssueToken, KeyRevocationMode, PublishIndex, PublishSignedIndex, QueryVersion, RecordTestReport,
+    RegisterPublisher, RejectVersion, RevokeKey, SubmitVersion, YankVersion,
 };
-use registry_application::{ApplicationError, Principal, Role};
+use registry_application::{ApplicationError, IdempotentResponse, Principal, Role};
 use registry_domain::{Bundle, FileName, PublisherId, PublisherSignature, ReviewerId, Scope, Status, TestReport, ToolName, Version};
 use registry_memory::{
-    FixedClock, MemoryArtifacts, MemoryAudit, MemoryIndex, MemoryPrincipals, MemoryPublishers, MemoryTools, RecordingScheduler,
+    FixedClock, MemoryArtifacts, MemoryAudit, MemoryIdempotency, MemoryIndex, MemoryPrincipals, MemoryPublishers, MemoryTools,
+    RecordingIndexTrigger, RecordingScheduler,
 };
 use time::macros::datetime;
 
@@ -95,6 +97,7 @@ async fn a_bundle_goes_from_upload_to_the_index() {
     assert_eq!(outcome.status, Status::Scanned);
     assert_eq!(w.scheduler.scheduled(), vec![(name(), Version::parse("1.0.0").unwrap())]);
     assert_eq!(w.artifacts.quarantined(), 2);
+    assert!(w.artifacts.quarantined_object("scanned/acme_count/1.0.0/count.py").is_some());
 
     let record = RecordTestReport { tools: &w.tools, audit: &w.audit };
     record.execute(&name(), &Version::parse("1.0.0").unwrap(), TestReport::new(3, 3, vec![], NOW)).await.unwrap();
@@ -130,6 +133,60 @@ async fn a_bundle_goes_from_upload_to_the_index() {
     assert_eq!(registry_domain::Digest::of(&file).to_string(), index.tools[0].files["count.py"]);
     let actions: Vec<&str> = w.audit.entries().iter().map(|e| e.action).collect();
     assert_eq!(actions, ["register_publisher", "issue_token", "submit", "tests", "approve", "publish_index"]);
+
+    let query = QueryVersion { publishers: &w.publishers, tools: &w.tools, clock: &w.clock };
+    let report = query.execute(TOKEN, &name(), &Version::parse("1.0.0").unwrap()).await.unwrap();
+    assert_eq!((report.status, report.tests_passed, report.rejected_reason), (Status::Approved, Some(true), None));
+    assert!(matches!(query.execute("nope", &name(), &Version::parse("1.0.0").unwrap()).await, Err(ApplicationError::Forbidden(_))));
+    assert!(matches!(query.execute(TOKEN, &name(), &Version::parse("9.0.0").unwrap()).await, Err(ApplicationError::NotFound(_))));
+    assert!(matches!(
+        query.execute(TOKEN, &ToolName::parse("other_tool").unwrap(), &Version::parse("1.0.0").unwrap()).await,
+        Err(ApplicationError::Domain(_))
+    ));
+}
+
+#[tokio::test]
+async fn the_signed_index_is_published_only_when_the_signature_verifies() {
+    let w = world().await;
+    let (signing, public) = registry_domain::test_support::registry_key(11);
+    let publish = PublishIndex {
+        catalog: "axlr",
+        publishers: &w.publishers,
+        tools: &w.tools,
+        artifacts: &w.artifacts,
+        index: &w.index,
+        audit: &w.audit,
+        clock: &w.clock,
+    };
+    let signed = PublishSignedIndex { key: &public, index: &w.index, audit: &w.audit, clock: &w.clock };
+    let signature = registry_domain::test_support::minisig(&signing, b"nothing", true, "c");
+    assert!(
+        matches!(signed.execute(&operator(), &signature).await, Err(ApplicationError::NotFound(_))),
+        "published without a staged index"
+    );
+    let index = publish.execute().await.unwrap();
+    assert!(matches!(signed.execute(&operator(), &signature).await, Err(ApplicationError::Domain(_))), "a wrong signature published");
+    assert!(w.index.published().is_none());
+    let signature = registry_domain::test_support::minisig(&signing, &index.canonical(), true, "timestamp:1");
+    assert!(matches!(signed.execute(&reviewer("ana"), &signature).await, Err(ApplicationError::Forbidden(_))));
+    let digest = signed.execute(&operator(), &signature).await.unwrap();
+    assert_eq!(digest, registry_domain::Digest::of(&index.canonical()));
+    assert_eq!(w.index.published().unwrap(), (index.canonical(), signature));
+    assert_eq!(w.audit.entries().last().unwrap().action, "publish_signed_index");
+}
+
+#[tokio::test]
+async fn memory_idempotency_and_trigger_behave() {
+    let store = MemoryIdempotency::default();
+    assert!(store.is_empty());
+    let response = IdempotentResponse { status: 201, body: "{}".into() };
+    store.record("k", &response).await.unwrap();
+    assert_eq!(store.find("k").await.unwrap(), Some(response.clone()));
+    assert!(matches!(store.record("k", &response).await, Err(ApplicationError::Domain(_))));
+    assert_eq!(store.len(), 1);
+    let trigger = RecordingIndexTrigger::default();
+    trigger.trigger().await.unwrap();
+    assert_eq!(trigger.triggered(), 1);
 }
 
 #[tokio::test]
@@ -156,6 +213,10 @@ async fn refusals_on_the_way_in() {
     };
     let outcome = submit.execute(TOKEN, blocked.0, blocked.1).await.unwrap();
     assert_eq!(outcome.status, Status::Rejected);
+    assert!(
+        w.artifacts.quarantined_object("rejected/acme_count/1.0.0/manifest.json").is_some(),
+        "a rejected upload is not under rejected/"
+    );
     assert!(w.scheduler.scheduled().is_empty(), "a rejected version had its tests scheduled");
     assert!(submit.execute(TOKEN, bundle, signature).await.is_err(), "the same version string was reused");
 

@@ -22,6 +22,16 @@ impl TestReport {
         self.cases > 0 && self.passed == self.cases && self.failed.is_empty()
     }
 
+    /// How many cases ran.
+    pub fn cases(&self) -> usize {
+        self.cases
+    }
+
+    /// How many passed.
+    pub fn passed(&self) -> usize {
+        self.passed
+    }
+
     /// The failed case names.
     pub fn failed(&self) -> &[String] {
         &self.failed

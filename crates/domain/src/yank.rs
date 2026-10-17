@@ -15,6 +15,16 @@ impl Yank {
         Self { by, reason, at }
     }
 
+    /// Rebuilds a yank from storage; the repository is the only caller.
+    pub fn restore(by: String, reason: String, at: Timestamp) -> Self {
+        Self { by, reason, at }
+    }
+
+    /// Who yanked: a principal id.
+    pub fn by(&self) -> &str {
+        &self.by
+    }
+
     /// The reason, carried in the index.
     pub fn reason(&self) -> &str {
         &self.reason

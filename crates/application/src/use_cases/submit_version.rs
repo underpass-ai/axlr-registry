@@ -47,7 +47,7 @@ where
             None => (Tool::new(bundle.name().clone(), publisher.id().clone()), true),
         };
         tool.add(version.clone())?;
-        self.artifacts.quarantine(&bundle).await?;
+        self.artifacts.quarantine(&bundle, version.status()).await?;
         self.tools.save(&tool, new).await?;
         if version.status() == Status::Scanned {
             self.tests.schedule(version.name(), version.version()).await?;

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::{
     Digest, DomainError, FileName, Manifest, Publisher, PublisherId, PublisherSignature, Review, ReviewerId, ScanReport, Status,
-    TestReport, Timestamp, ToolName, ValidBundle, Version, Yank,
+    TestReport, Timestamp, ToolName, ToolVersionRecord, ValidBundle, Version, Yank,
 };
 
 /// A tool version and its lifecycle.
@@ -59,6 +59,60 @@ impl ToolVersion {
             yank: None,
             rejected_reason: None,
         })
+    }
+
+    /// Rebuilds a version from storage; the repository is the only caller.
+    /// The record's status must agree with the review, yank and scan it
+    /// carries, so a corrupted item never becomes a version.
+    pub fn restore(record: ToolVersionRecord) -> Result<Self, DomainError> {
+        let consistent = match record.status {
+            Status::Submitted => record.scan.is_none() && record.review.is_none() && record.yank.is_none(),
+            Status::Scanned => record.scan.is_some() && record.review.is_none() && record.yank.is_none(),
+            Status::Approved => record.scan.is_some() && record.review.is_some() && record.yank.is_none(),
+            Status::Rejected => record.scan.is_some() && record.yank.is_none() && record.rejected_reason.is_some(),
+            Status::Yanked => record.scan.is_some() && record.review.is_some() && record.yank.is_some(),
+        };
+        if !consistent {
+            return Err(DomainError::Conflict(format!("stored version {}@{} is inconsistent", record.name.as_str(), record.version)));
+        }
+        Ok(Self {
+            name: record.name,
+            version: record.version,
+            publisher: record.publisher,
+            manifest: record.manifest,
+            manifest_digest: record.manifest_digest,
+            file_digests: record.file_digests,
+            bundle_digest: record.bundle_digest,
+            signature: record.signature,
+            submitted_at: record.submitted_at,
+            status: record.status,
+            scan: record.scan,
+            tests: record.tests,
+            review: record.review,
+            yank: record.yank,
+            rejected_reason: record.rejected_reason,
+        })
+    }
+
+    /// The version as a storage record, the inverse of [`Self::restore`].
+    pub fn to_record(&self) -> ToolVersionRecord {
+        ToolVersionRecord {
+            name: self.name.clone(),
+            version: self.version.clone(),
+            publisher: self.publisher.clone(),
+            manifest: self.manifest.clone(),
+            manifest_digest: self.manifest_digest.clone(),
+            file_digests: self.file_digests.clone(),
+            bundle_digest: self.bundle_digest.clone(),
+            signature: self.signature.clone(),
+            submitted_at: self.submitted_at,
+            status: self.status,
+            scan: self.scan.clone(),
+            tests: self.tests.clone(),
+            review: self.review.clone(),
+            yank: self.yank.clone(),
+            rejected_reason: self.rejected_reason.clone(),
+        }
     }
 
     /// Attaches the policy scan; a blocking scan rejects the version.
@@ -173,6 +227,10 @@ impl ToolVersion {
     pub fn scan(&self) -> Option<&ScanReport> {
         self.scan.as_ref()
     }
+    /// The test report, once recorded.
+    pub fn tests(&self) -> Option<&TestReport> {
+        self.tests.as_ref()
+    }
     /// The review, once decided.
     pub fn review(&self) -> Option<&Review> {
         self.review.as_ref()
@@ -278,5 +336,21 @@ pub(crate) mod tests {
         v.reject(ana(), "not useful".into(), NOW).unwrap();
         assert_eq!(v.status(), Status::Rejected);
         assert!(v.record_tests(passing()).is_err());
+    }
+
+    #[test]
+    fn restore_round_trips_and_refuses_inconsistent_records() {
+        let (mut v, _) = submitted("print(1)\n");
+        v.record_tests(passing()).unwrap();
+        v.approve(ana(), "ok".into(), NOW).unwrap();
+        let record = v.to_record();
+        assert_eq!(ToolVersion::restore(record.clone()).unwrap(), v);
+        let mut broken = record.clone();
+        broken.review = None;
+        assert!(ToolVersion::restore(broken).is_err(), "an approved version without a review was restored");
+        let mut yanked = record;
+        yanked.status = Status::Yanked;
+        assert!(ToolVersion::restore(yanked).is_err(), "a yanked version without a yank was restored");
+        assert!(v.tests().is_some());
     }
 }

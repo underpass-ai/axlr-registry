@@ -5,9 +5,10 @@ use std::sync::Mutex;
 
 use registry_application::ports::ArtifactStore;
 use registry_application::ApplicationError;
-use registry_domain::{ToolName, ValidBundle, Version};
+use registry_domain::{Status, ToolName, ValidBundle, Version};
 
-/// An in-memory artifact store; keys are `name/version/file`.
+/// An in-memory artifact store; quarantine keys are
+/// `status/name/version/file`, published keys `name/version/file`.
 #[derive(Default)]
 pub struct MemoryArtifacts {
     quarantine: Mutex<BTreeMap<String, Vec<u8>>>,
@@ -15,9 +16,21 @@ pub struct MemoryArtifacts {
 }
 
 impl MemoryArtifacts {
+    fn status_prefix(status: Status) -> &'static str {
+        match status {
+            Status::Rejected => "rejected",
+            _ => "scanned",
+        }
+    }
+
     /// A published object.
     pub fn published(&self, key: &str) -> Option<Vec<u8>> {
         self.published.lock().expect("lock").get(key).cloned()
+    }
+
+    /// A quarantined object, by `status/name/version/file`.
+    pub fn quarantined_object(&self, key: &str) -> Option<Vec<u8>> {
+        self.quarantine.lock().expect("lock").get(key).cloned()
     }
 
     /// How many objects are in quarantine.
@@ -27,8 +40,8 @@ impl MemoryArtifacts {
 }
 
 impl ArtifactStore for MemoryArtifacts {
-    async fn quarantine(&self, bundle: &ValidBundle) -> Result<(), ApplicationError> {
-        let prefix = format!("{}/{}", bundle.name().as_str(), bundle.version());
+    async fn quarantine(&self, bundle: &ValidBundle, status: Status) -> Result<(), ApplicationError> {
+        let prefix = format!("{}/{}/{}", Self::status_prefix(status), bundle.name().as_str(), bundle.version());
         let mut map = self.quarantine.lock().expect("lock");
         map.insert(format!("{prefix}/manifest.json"), bundle.manifest_bytes().to_vec());
         for (name, content) in bundle.files() {
@@ -38,11 +51,11 @@ impl ArtifactStore for MemoryArtifacts {
     }
 
     async fn publish(&self, name: &ToolName, version: &Version) -> Result<(), ApplicationError> {
-        let prefix = format!("{}/{version}/", name.as_str());
+        let prefix = format!("scanned/{}/{version}/", name.as_str());
         let quarantine = self.quarantine.lock().expect("lock");
         let mut published = self.published.lock().expect("lock");
         for (key, content) in quarantine.iter().filter(|(k, _)| k.starts_with(&prefix)) {
-            published.insert(key.clone(), content.clone());
+            published.insert(key.trim_start_matches("scanned/").to_owned(), content.clone());
         }
         Ok(())
     }
