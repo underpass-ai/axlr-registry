@@ -108,7 +108,16 @@ aws s3api list-object-versions --bucket TRUSTSTORE_BUCKET --prefix truststore/ca
 
 Deploy with `TruststoreBucket=TRUSTSTORE_BUCKET TruststoreVersion=<that id>`. API Gateway reads the object once, when the domain is created or the version parameter changes; uploading a new object without changing the parameter changes nothing.
 
-## 5. The CloudFront certificate in us-east-1
+## 5. The registry's index-signing key (offline)
+
+```bash
+head -c 32 /dev/urandom | base64 > ~/axlr-registry-ca/registry/password && chmod 600 ~/axlr-registry-ca/registry/password
+axlr-registry operator keygen-index --out ~/axlr-registry-ca/registry/minisign.key --password-file ~/axlr-registry-ca/registry/password
+```
+
+The secret key and its password stay with the CA, off every server. The `IndexPublicKey` line the command prints is the stack parameter (`STAGING_INDEX_PUBLIC_KEY` in GitHub) and what the AXLR console is given as the catalog's public key. `operator sign-index` reads the same key and password file.
+
+## 6. The CloudFront certificate in us-east-1
 
 CloudFront only serves certificates held in ACM in `us-east-1`, whatever the stack's region. Request it with DNS validation and publish the validation record in the hosted zone:
 
@@ -126,7 +135,7 @@ aws acm wait certificate-validated --region us-east-1 --certificate-arn "$ARN"
 
 `$ARN` is the stack's `CloudFrontCertificateArn` parameter. ACM renews it as long as the CNAME stays in the zone. The `api.` and `admin.` certificates are the stack's own, in the deployment region.
 
-## 6. Rotate the CA
+## 7. Rotate the CA
 
 Rotate on a schedule (before the ten years) or at once if `ca.key` may have leaked. The rotation keeps the admin API reachable throughout, because the truststore holds both CAs until every client has a new certificate:
 

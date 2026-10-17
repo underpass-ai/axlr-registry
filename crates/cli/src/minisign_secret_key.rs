@@ -114,7 +114,12 @@ impl MinisignSecretKey {
         Ok(format!("untrusted comment: minisign secret key\n{}\n", base64::engine::general_purpose::STANDARD.encode(raw)))
     }
 
-    /// A key with a random id (tests).
+    /// minisign's default scrypt limits (`minisign -G`).
+    pub const OPSLIMIT: u64 = 33_554_432;
+    /// See `OPSLIMIT`.
+    pub const MEMLIMIT: u64 = 1_073_741_824;
+
+    /// A key with a random id.
     pub fn generate() -> Self {
         let mut key_id = [0u8; 8];
         rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut key_id);

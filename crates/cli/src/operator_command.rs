@@ -82,6 +82,21 @@ pub enum OperatorCommand {
         #[command(flatten)]
         admin: AdminConnection,
     },
+    /// Create the registry's minisign key pair, offline: the secret key in
+    /// OUT (scrypt-encrypted under the password in --password-file, or in the
+    /// clear with --no-password, mode 0600) and the public key in OUT.pub,
+    /// whose base64 line is the stack's IndexPublicKey parameter.
+    KeygenIndex {
+        /// Where to write the secret key.
+        #[arg(long, default_value = "minisign.key")]
+        out: PathBuf,
+        /// A file holding the password to encrypt the key with.
+        #[arg(long, conflicts_with = "no_password")]
+        password_file: Option<PathBuf>,
+        /// Write the key in the clear (for a key kept in an encrypted store).
+        #[arg(long)]
+        no_password: bool,
+    },
     /// Download the staging index, to sign it.
     FetchIndex {
         /// Where to write it.
@@ -120,6 +135,20 @@ pub enum OperatorCommand {
     },
 }
 
+/// Writes a file only the owner can read.
+fn write_secret(path: &std::path::Path, bytes: &[u8]) -> Result<(), CliError> {
+    use std::io::Write as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(|source| CliError::Io { path: path.display().to_string(), source })?;
+    file.write_all(bytes).map_err(|source| CliError::Io { path: path.display().to_string(), source })
+}
+
 impl OperatorCommand {
     /// Runs the command.
     pub async fn run(self) -> Result<String, CliError> {
@@ -138,6 +167,39 @@ impl OperatorCommand {
             }
             Self::RevokeKey { publisher, key_id, mode, admin } => admin.client()?.revoke_key(&publisher, &key_id, mode).await?,
             Self::PublishIndex { admin } => admin.client()?.publish_index().await?,
+            Self::KeygenIndex { out, password_file, no_password } => {
+                if out.exists() {
+                    return Err(CliError::Invalid(format!("{} exists; not overwriting a signing key", out.display())));
+                }
+                let password = match (&password_file, no_password) {
+                    (Some(path), _) => Some(
+                        String::from_utf8(read_file(path)?)
+                            .map(|p| p.trim_end_matches(['\r', '\n']).to_owned())
+                            .map_err(|_| CliError::Invalid("password file is not text".to_owned()))?,
+                    ),
+                    (None, true) => None,
+                    (None, false) => return Err(CliError::Invalid("give --password-file, or --no-password for a clear key".to_owned())),
+                };
+                let key = MinisignSecretKey::generate();
+                let mut salt = [0u8; 32];
+                rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut salt);
+                let text = key.to_text(password.as_deref().map(|p| (p, MinisignSecretKey::OPSLIMIT, MinisignSecretKey::MEMLIMIT)), salt)?;
+                write_secret(&out, text.as_bytes())?;
+                let mut public = out.clone().into_os_string();
+                public.push(".pub");
+                let public = PathBuf::from(public);
+                write_file(
+                    &public,
+                    format!("untrusted comment: minisign public key {}\n{}\n", hex::encode(key.key_id()), key.public_key_base64())
+                        .as_bytes(),
+                )?;
+                return Ok(format!(
+                    "secret key: {} (never uploaded)\npublic key: {}\nIndexPublicKey: {}",
+                    out.display(),
+                    public.display(),
+                    key.public_key_base64()
+                ));
+            }
             Self::FetchIndex { out, admin } => {
                 let bytes = admin.client()?.fetch_staging_index().await?;
                 write_file(&out, &bytes)?;
@@ -192,7 +254,7 @@ mod tests {
 
     use super::OperatorCommand;
     use crate::review_command::tests::admin;
-    use crate::{MinisignSecretKey, PublisherPublicKeyFile, RevocationMode};
+    use crate::{MinisignSecretKey, MinisignSignature, PublisherPublicKeyFile, RevocationMode};
 
     #[tokio::test]
     async fn publisher_token_and_key_commands_send_their_bodies() {
@@ -252,6 +314,35 @@ mod tests {
         .await
         .unwrap();
         assert!(out.contains("\"yanked\": 2"));
+    }
+
+    #[tokio::test]
+    async fn keygen_index_writes_a_loadable_pair() {
+        let dir = tempfile::tempdir().unwrap();
+        let clear = dir.path().join("clear.key");
+        let out = OperatorCommand::KeygenIndex { out: clear.clone(), password_file: None, no_password: true }.run().await.unwrap();
+        assert!(out.contains("IndexPublicKey: "));
+        let key = MinisignSecretKey::load(&clear, || panic!("a clear key asks no password")).unwrap();
+        let public = std::fs::read_to_string(dir.path().join("clear.key.pub")).unwrap();
+        assert_eq!(public.lines().nth(1), Some(key.public_key_base64().as_str()));
+        assert!(
+            OperatorCommand::KeygenIndex { out: clear.clone(), password_file: None, no_password: true }.run().await.is_err(),
+            "overwrote a key"
+        );
+        assert!(OperatorCommand::KeygenIndex { out: dir.path().join("x.key"), password_file: None, no_password: false }
+            .run()
+            .await
+            .is_err());
+
+        let password = dir.path().join("password");
+        std::fs::write(&password, "correct horse\n").unwrap();
+        let encrypted = dir.path().join("enc.key");
+        OperatorCommand::KeygenIndex { out: encrypted.clone(), password_file: Some(password), no_password: false }.run().await.unwrap();
+        let loaded = MinisignSecretKey::load(&encrypted, || Ok("correct horse".to_owned())).unwrap();
+        assert!(MinisignSecretKey::load(&encrypted, || Ok("wrong".to_owned())).is_err(), "a wrong password loaded the key");
+        let signature = MinisignSignature::sign(&loaded, b"index", "trusted", "untrusted");
+        let registry_key = registry_domain::RegistryPublicKey::parse(&loaded.public_key_base64()).unwrap();
+        assert!(registry_domain::IndexSignature::parse(signature.as_text()).unwrap().verify(&registry_key, b"index").is_ok());
     }
 
     #[tokio::test]
