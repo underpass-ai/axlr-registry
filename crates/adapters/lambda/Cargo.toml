@@ -1,0 +1,28 @@
+[package]
+name = "registry-lambda"
+description = "Lambda glue: asynchronous invokes of test-runner and index-publisher, the system clock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# Tests against DynamoDB Local and MinIO; see README.
+integration = []
+
+[dependencies]
+registry-domain.workspace = true
+registry-application.workspace = true
+aws-sdk-lambda.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+
+[dev-dependencies]
+registry-memory.workspace = true
+tokio.workspace = true
+
+
+[lints]
+workspace = true
