@@ -8,7 +8,8 @@ use registry_application::IdempotentResponse;
 use registry_domain::TokenDigest;
 
 use crate::{
-    BearerToken, HttpError, IdempotencyKey, JsonBody, JsonResponse, PublishRoute, UploadRequest, UploadResponse, VersionStatusResponse,
+    BearerToken, ClientGate, HttpError, IdempotencyKey, JsonBody, JsonResponse, PublishRoute, UploadRequest, UploadResponse,
+    VersionStatusResponse,
 };
 
 /// The publisher API over its ports.
@@ -48,6 +49,7 @@ where
     }
 
     async fn route(&self, request: Request) -> Result<Response<Body>, HttpError> {
+        ClientGate::check(&request)?;
         let token = BearerToken::from_request(&request)?;
         match PublishRoute::parse(request.method(), request.uri().path())? {
             PublishRoute::Upload => self.upload(&request, &token).await,
@@ -165,6 +167,7 @@ mod tests {
 
     fn request(method: Method, path: &str, token: Option<&str>, body: Body, idempotency: Option<&str>) -> Request {
         let mut request = Request::new(body);
+        request.headers_mut().insert("user-agent", "AXLR-catalog".parse().unwrap());
         *request.method_mut() = method;
         *request.uri_mut() = path.parse().unwrap();
         if let Some(token) = token {
@@ -179,6 +182,14 @@ mod tests {
     fn upload(w: &World, version: &str, code: &str, idempotency: Option<&str>) -> Request {
         let body = serde_json::to_string(&signed_upload(&w.key, version, code)).unwrap();
         request(Method::POST, "/v1/versions", Some(TOKEN), Body::Text(body), idempotency)
+    }
+
+    #[tokio::test]
+    async fn refuses_clients_that_are_not_axlr() {
+        let w = world().await;
+        let mut request = request(Method::GET, "/v1/versions/acme_count/1.0.0", Some("x"), Body::Empty, None);
+        request.headers_mut().insert("user-agent", "curl/8.0".parse().unwrap());
+        assert_eq!(api(&w).handle(request).await.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

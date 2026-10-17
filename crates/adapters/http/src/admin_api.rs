@@ -14,8 +14,9 @@ use registry_domain::{RegistryPublicKey, Status, ToolName, Version};
 use time::format_description::well_known::Rfc3339;
 
 use crate::{
-    AdminRoute, ClientCertificate, HttpError, IndexSignatureRequest, IssueTokenRequest, JsonBody, JsonResponse, RegisterPublisherRequest,
-    ReviewRequest, ReviewResponse, RevokeKeyRequest, RevokeKeyResponse, TokenGenerator, TokenResponse, VersionStatusResponse,
+    AdminRoute, ClientCertificate, ClientGate, HttpError, IndexSignatureRequest, IssueTokenRequest, JsonBody, JsonResponse,
+    RegisterPublisherRequest, ReviewRequest, ReviewResponse, RevokeKeyRequest, RevokeKeyResponse, TokenGenerator, TokenResponse,
+    VersionStatusResponse,
 };
 
 /// The admin API over its ports.
@@ -57,6 +58,7 @@ where
     }
 
     async fn route(&self, request: Request) -> Result<Response<Body>, HttpError> {
+        ClientGate::check(&request)?;
         let certificate = ClientCertificate::from_request(&request)?;
         let principal = AuthenticatePrincipal { principals: self.principals }.execute(certificate.sha256()).await?;
         match AdminRoute::parse(request.method(), request.uri().path(), request.uri().query())? {

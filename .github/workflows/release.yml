@@ -116,12 +116,18 @@ jobs:
         env:
           TOKEN: ${{ secrets.STAGING_E2E_TOKEN }}
         run: echo "HAS_E2E_TOKEN=$([ -n "$TOKEN" ] && echo true || echo false)" >> "$GITHUB_ENV"
+      - name: Edge web ACL (us-east-1)
+        id: edge
+        run: |
+          aws cloudformation deploy --region us-east-1 --template-file infra/edge-waf.yaml --stack-name axlr-registry-staging-edge \
+            --parameter-overrides Stage=staging --no-fail-on-empty-changeset
+          echo "acl=$(aws cloudformation describe-stacks --region us-east-1 --stack-name axlr-registry-staging-edge --query "Stacks[0].Outputs[?OutputKey=='WebAclArn'].OutputValue" --output text)" >> "$GITHUB_OUTPUT"
       - name: Deploy staging
         run: >
           sam deploy --template-file infra/template.yaml --stack-name axlr-registry-staging
           --resolve-s3 --image-repositories TestRunnerFunction=${{ needs.runner-image.outputs.repository }}
           --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
-          --parameter-overrides Stage=staging TestRunnerImageUri=${{ needs.runner-image.outputs.image }} DomainName=${{ vars.STAGING_DOMAIN }} HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
+          --parameter-overrides Stage=staging TestRunnerImageUri=${{ needs.runner-image.outputs.image }} WebAclArn=${{ steps.edge.outputs.acl }} DomainName=${{ vars.STAGING_DOMAIN }} HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
           CloudFrontCertificateArn=${{ vars.STAGING_CLOUDFRONT_CERT_ARN }} TruststoreBucket=${{ vars.STAGING_TRUSTSTORE_BUCKET }} TruststoreVersion=${{ vars.STAGING_TRUSTSTORE_VERSION }}
           IndexPublicKey=${{ vars.STAGING_INDEX_PUBLIC_KEY }}
       - uses: dtolnay/rust-toolchain@stable
@@ -168,11 +174,18 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
       - uses: aws-actions/setup-sam@v2
+      - name: Edge web ACL (us-east-1)
+        id: edge
+        run: |
+          aws cloudformation deploy --region us-east-1 --template-file infra/edge-waf.yaml --stack-name axlr-registry-production-edge \
+            --parameter-overrides Stage=production --no-fail-on-empty-changeset
+          echo "acl=$(aws cloudformation describe-stacks --region us-east-1 --stack-name axlr-registry-production-edge --query "Stacks[0].Outputs[?OutputKey=='WebAclArn'].OutputValue" --output text)" >> "$GITHUB_OUTPUT"
       - name: Deploy production
         run: >
           sam deploy --template-file infra/template.yaml --stack-name axlr-registry-production
           --resolve-s3 --image-repositories TestRunnerFunction=${{ needs.runner-image.outputs.repository }}
           --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
-          --parameter-overrides Stage=production TestRunnerImageUri=${{ needs.runner-image.outputs.image }} DomainName=${{ vars.PRODUCTION_DOMAIN }} HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
+          --parameter-overrides Stage=production TestRunnerImageUri=${{ needs.runner-image.outputs.image }} WebAclArn=${{ steps.edge.outputs.acl }}
+          CatalogHost=${{ vars.PRODUCTION_DOMAIN }} DomainName=${{ vars.PRODUCTION_DOMAIN }} HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
           CloudFrontCertificateArn=${{ vars.PRODUCTION_CLOUDFRONT_CERT_ARN }} TruststoreBucket=${{ vars.PRODUCTION_TRUSTSTORE_BUCKET }} TruststoreVersion=${{ vars.PRODUCTION_TRUSTSTORE_VERSION }}
           IndexPublicKey=${{ vars.PRODUCTION_INDEX_PUBLIC_KEY }}

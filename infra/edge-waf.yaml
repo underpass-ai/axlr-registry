@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  The CloudFront web ACL of the AXLR registry catalog (deployed in us-east-1, where CloudFront-scoped
+  ACLs live): a rate-based rule per IP and AWS's IP reputation list. AWS Shield Standard covers
+  CloudFront and Route 53 for free; this adds application-layer limits. About $6 a month per environment.
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues: [staging, production]
+  RequestsPerFiveMinutes:
+    Type: Number
+    Default: 1000
+    Description: Requests one IP may make in five minutes before it is blocked for a while.
+
+Resources:
+  WebAcl:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub 'axlr-registry-${Stage}-catalog'
+      Scope: CLOUDFRONT
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub 'axlr-registry-${Stage}-catalog'
+      Rules:
+        - Name: rate-per-ip
+          Priority: 1
+          Action:
+            Block: {}
+          Statement:
+            RateBasedStatement:
+              Limit: !Ref RequestsPerFiveMinutes
+              AggregateKeyType: IP
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub 'axlr-registry-${Stage}-rate-per-ip'
+        - Name: aws-ip-reputation
+          Priority: 2
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAmazonIpReputationList
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub 'axlr-registry-${Stage}-ip-reputation'
+
+Outputs:
+  WebAclArn:
+    Value: !GetAtt WebAcl.Arn

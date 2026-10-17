@@ -79,7 +79,9 @@ pub(crate) mod tests {
             authentication.client_cert = Some(certificate);
             context.authentication = Some(authentication);
         }
-        Request::new(Body::Empty).with_request_context(RequestContext::ApiGatewayV2(context))
+        let mut request = Request::new(Body::Empty).with_request_context(RequestContext::ApiGatewayV2(context));
+        request.headers_mut().insert("user-agent", "axlr-registry/test".parse().expect("a header"));
+        request
     }
 
     #[test]
