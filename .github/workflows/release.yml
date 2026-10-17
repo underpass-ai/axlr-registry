@@ -69,7 +69,13 @@ jobs:
         with:
           tool: cargo-lambda
       - uses: aws-actions/setup-sam@v2
+      # The runner image copies target/lambda/test-runner/bootstrap, so that binary is built first.
+      - run: cargo lambda build --release --arm64 -p test-runner
       - run: sam build --template-file infra/template.yaml
+      - name: Is the e2e token set?
+        env:
+          TOKEN: ${{ secrets.STAGING_E2E_TOKEN }}
+        run: echo "HAS_E2E_TOKEN=$([ -n "$TOKEN" ] && echo true || echo false)" >> "$GITHUB_ENV"
       - name: Deploy staging
         run: >
           sam deploy --stack-name axlr-registry-staging
@@ -77,6 +83,8 @@ jobs:
           --parameter-overrides Stage=staging DomainName=${{ vars.STAGING_DOMAIN }} HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
           CloudFrontCertificateArn=${{ vars.STAGING_CLOUDFRONT_CERT_ARN }} TruststoreBucket=${{ vars.STAGING_TRUSTSTORE_BUCKET }} TruststoreVersion=${{ vars.STAGING_TRUSTSTORE_VERSION }}
       - name: End-to-end test against staging
+        # Skipped until the stack is bootstrapped (principals, the e2e publisher and its token).
+        if: ${{ env.HAS_E2E_TOKEN == 'true' }}
         env:
           REGISTRY_E2E_PUBLISH_URL: https://api.${{ vars.STAGING_DOMAIN }}
           REGISTRY_E2E_ADMIN_URL: https://admin.${{ vars.STAGING_DOMAIN }}
@@ -111,6 +119,8 @@ jobs:
         with:
           tool: cargo-lambda
       - uses: aws-actions/setup-sam@v2
+      # The runner image copies target/lambda/test-runner/bootstrap, so that binary is built first.
+      - run: cargo lambda build --release --arm64 -p test-runner
       - run: sam build --template-file infra/template.yaml
       - name: Deploy production
         run: >
