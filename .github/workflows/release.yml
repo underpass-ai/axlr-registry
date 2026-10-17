@@ -63,6 +63,7 @@ jobs:
       id-token: write
     outputs:
       image: ${{ steps.image.outputs.uri }}
+      repository: ${{ steps.image.outputs.repository }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -91,6 +92,7 @@ jobs:
             echo "image $TAG pushed: $DIGEST"
           fi
           echo "uri=$REPO@$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "repository=$REPO" >> "$GITHUB_OUTPUT"
 
   deploy-staging:
     needs: [build, runner-image]
@@ -115,7 +117,8 @@ jobs:
       - name: Deploy staging
         run: >
           sam deploy --template-file infra/template.yaml --stack-name axlr-registry-staging
-          --resolve-s3 --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
+          --resolve-s3 --image-repositories TestRunnerFunction=${{ needs.runner-image.outputs.repository }}
+          --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
           --parameter-overrides Stage=staging TestRunnerImageUri=${{ needs.runner-image.outputs.image }} DomainName=${{ vars.STAGING_DOMAIN }} HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
           CloudFrontCertificateArn=${{ vars.STAGING_CLOUDFRONT_CERT_ARN }} TruststoreBucket=${{ vars.STAGING_TRUSTSTORE_BUCKET }} TruststoreVersion=${{ vars.STAGING_TRUSTSTORE_VERSION }}
           IndexPublicKey=${{ vars.STAGING_INDEX_PUBLIC_KEY }}
@@ -165,7 +168,8 @@ jobs:
       - name: Deploy production
         run: >
           sam deploy --template-file infra/template.yaml --stack-name axlr-registry-production
-          --resolve-s3 --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
+          --resolve-s3 --image-repositories TestRunnerFunction=${{ needs.runner-image.outputs.repository }}
+          --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
           --parameter-overrides Stage=production TestRunnerImageUri=${{ needs.runner-image.outputs.image }} DomainName=${{ vars.PRODUCTION_DOMAIN }} HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
           CloudFrontCertificateArn=${{ vars.PRODUCTION_CLOUDFRONT_CERT_ARN }} TruststoreBucket=${{ vars.PRODUCTION_TRUSTSTORE_BUCKET }} TruststoreVersion=${{ vars.PRODUCTION_TRUSTSTORE_VERSION }}
           IndexPublicKey=${{ vars.PRODUCTION_INDEX_PUBLIC_KEY }}

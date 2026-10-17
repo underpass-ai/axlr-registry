@@ -42,6 +42,6 @@ deploy stage="staging" region="eu-south-2" account="203918869295":
     aws ecr describe-images --region {{region}} --repository-name axlr-registry/test-runner --image-ids imageTag=$TAG >/dev/null 2>&1 \
       || (docker build --platform linux/arm64 -t $REPO:$TAG infra/test-runner && docker push $REPO:$TAG); \
     DIGEST=$(aws ecr describe-images --region {{region}} --repository-name axlr-registry/test-runner --image-ids imageTag=$TAG --query 'imageDetails[0].imageDigest' --output text); \
-    sam deploy --template-file infra/template.yaml --stack-name axlr-registry-{{stage}} --region {{region}} --resolve-s3 \
+    sam deploy --template-file infra/template.yaml --stack-name axlr-registry-{{stage}} --region {{region}} --resolve-s3 --image-repositories TestRunnerFunction=$REPO \
       --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset --guided \
       --parameter-overrides Stage={{stage}} TestRunnerImageUri=$REPO@$DIGEST
