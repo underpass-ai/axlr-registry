@@ -31,38 +31,48 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features
       - run: cargo deny check
-      - name: Coverage gate (80 % of lines; Lambda entry points excluded)
+      - name: Offline coverage gate (80 % of lines; Lambda entry points and the SDK-calling adapters excluded, the integration job covers those)
         run: >
           cargo llvm-cov --workspace --all-features
-          --ignore-filename-regex 'crates/lambdas/.*/src/main\.rs'
+          --ignore-filename-regex 'crates/lambdas/.*/src/main\.rs|crates/adapters/(dynamodb|s3|lambda)/src/(dynamo_|s3_|lambda_|table|bucket).*\.rs'
           --fail-under-lines 80 --summary-only
 
   integration:
-    # Enabled when crates/adapters/{dynamodb,s3} exist with an `integration` feature.
-    if: false
+    # The adapter integration tests against DynamoDB Local and MinIO, run
+    # under llvm-cov with every other test so the 80 % gate counts the SDK
+    # adapters (the quality job's gate runs offline and excludes them).
     runs-on: ubuntu-24.04
     services:
       dynamodb:
         image: amazon/dynamodb-local:latest
         ports: ['8000:8000']
       minio:
-        image: bitnami/minio:latest   # starts without arguments, unlike minio/minio
+        image: bitnamilegacy/minio:latest   # starts without arguments, unlike minio/minio
         env: { MINIO_ROOT_USER: test, MINIO_ROOT_PASSWORD: testtest }
         ports: ['9000:9000']
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
         with:
           key: integration
-      - name: Adapter integration tests
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Every test, integration included, under the 80 % coverage gate
         env:
           DYNAMODB_ENDPOINT: http://localhost:8000
           S3_ENDPOINT: http://localhost:9000
           AWS_ACCESS_KEY_ID: test
           AWS_SECRET_ACCESS_KEY: testtest
           AWS_REGION: eu-west-1
-        run: cargo test --workspace --features integration -- --include-ignored integration
+        run: >
+          cargo llvm-cov --workspace --all-features
+          --ignore-filename-regex 'crates/lambdas/.*/src/main\.rs'
+          --fail-under-lines 80 --summary-only
+          -- --include-ignored
 
   template:
     runs-on: ubuntu-24.04
