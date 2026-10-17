@@ -151,3 +151,7 @@ In a compromise, skip the overlap: go straight to step 4 with the new CA, accept
 
 - A `register-principal` command over the admin API would replace the `put-item` in step 3 once the first operator exists; today `PrincipalRepository` is read-only.
 - API Gateway's mTLS checks the chain only; expired client certificates are refused but there is no revocation list. The principals table is the revocation list.
+
+## GitHub deploy role (OIDC)
+
+The role `axlr-registry-github-deploy` trusts GitHub's OIDC provider for this repository only. The repository uses GitHub's *immutable subject* format, so the `sub` claims are `repo:underpass-ai@225552176/axlr-registry@1423319133:environment:staging`, `...:environment:production` (the deploy jobs) and `...:ref:refs/tags/v*` (the `runner-image` job, which runs outside an environment). A job that presents another subject fails with `Not authorized to perform sts:AssumeRoleWithWebIdentity`: add its subject to the trust policy rather than widening it.
