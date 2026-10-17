@@ -37,35 +37,64 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        match parse(&["publisher", "upload", "tool", "--token-file", "t", "--url", "https://api.example", "--key", "k"]).command {
-            Command::Publisher(PublisherCommand::Upload { dir, key, signature, token_file, url }) => {
+        match parse(&["publisher", "upload", "tool", "--url", "https://api.example", "--key", "k", "--signature", "s"]).command {
+            Command::Publisher(PublisherCommand::Upload { dir, key, signature, url }) => {
                 assert_eq!(dir.to_str(), Some("tool"));
-                assert_eq!(key.unwrap().to_str(), Some("k"));
-                assert!(signature.is_none());
-                assert_eq!(token_file.to_str(), Some("t"));
+                assert_eq!(key.to_str(), Some("k"));
+                assert_eq!(signature.unwrap().to_str(), Some("s"));
                 assert_eq!(url, "https://api.example");
             }
             other => panic!("{other:?}"),
         }
+        assert!(Cli::try_parse_from(["axlr-registry", "publisher", "upload", "tool", "--url", "u"]).is_err(), "no key");
         assert!(
-            Cli::try_parse_from(["axlr-registry", "publisher", "upload", "tool", "--token-file", "t", "--url", "u"]).is_err(),
-            "neither key nor signature"
+            Cli::try_parse_from(["axlr-registry", "publisher", "upload", "tool", "--token-file", "t", "--key", "k", "--url", "u"]).is_err()
         );
+        match parse(&[
+            "publisher",
+            "enroll",
+            "--id",
+            "acme",
+            "--namespace",
+            "acme_*",
+            "--contact",
+            "ops@acme.example",
+            "--key",
+            "k",
+            "--url",
+            "u",
+        ])
+        .command
+        {
+            Command::Publisher(PublisherCommand::Enroll { id, namespaces, contact, key, url }) => {
+                assert_eq!(
+                    (id.as_str(), namespaces.len(), contact.as_str(), key.to_str(), url.as_str()),
+                    ("acme", 1, "ops@acme.example", Some("k"), "u")
+                );
+            }
+            other => panic!("{other:?}"),
+        }
         assert!(Cli::try_parse_from([
             "axlr-registry",
             "publisher",
-            "upload",
-            "tool",
-            "--token-file",
-            "t",
-            "--url",
-            "u",
+            "enroll",
+            "--id",
+            "acme",
+            "--namespace",
+            "acme_*",
+            "--contact",
+            "x",
             "--key",
             "k",
-            "--signature",
-            "s"
+            "--url",
+            "u"
         ])
         .is_err());
+        assert!(matches!(parse(&["publisher", "identity", "--key", "k"]).command, Command::Publisher(PublisherCommand::Identity { .. })));
+        assert!(matches!(
+            parse(&["publisher", "status", "acme_count", "1.0.0", "--key", "k", "--url", "u"]).command,
+            Command::Publisher(PublisherCommand::Status { .. })
+        ));
     }
 
     #[test]
@@ -111,12 +140,15 @@ mod tests {
                 "acme_*",
                 "--namespace",
                 "acme2_*",
+                "--contact",
+                "ops@acme.example",
             ][..],
             &admin,
         ]
         .concat();
         match parse(&args).command {
-            Command::Operator(OperatorCommand::RegisterPublisher { id, public_key, namespaces, admin }) => {
+            Command::Operator(OperatorCommand::RegisterPublisher { id, public_key, namespaces, contact, admin }) => {
+                assert_eq!(contact.as_str(), "ops@acme.example");
                 assert_eq!(id.as_str(), "acme");
                 assert_eq!(public_key.to_str(), Some("acme.pub"));
                 assert_eq!(namespaces.len(), 2);
@@ -133,18 +165,23 @@ mod tests {
             Command::Operator(OperatorCommand::RevokeKey { mode, .. }) => assert_eq!(mode, RevocationMode::Rotation),
             other => panic!("{other:?}"),
         }
-        match parse(
-            &[
-                &["operator", "issue-token", "--publisher", "acme", "--scope", "acme_count", "--expires", "2027-01-01T00:00:00Z"][..],
-                &admin,
-            ]
-            .concat(),
-        )
-        .command
-        {
-            Command::Operator(OperatorCommand::IssueToken { expires, scopes, .. }) => {
-                assert_eq!(expires.unwrap().year(), 2027);
-                assert_eq!(scopes.len(), 1);
+        match parse(&[&["operator", "approve-publisher", "--id", "acme", "--namespace", "acme_count"][..], &admin].concat()).command {
+            Command::Operator(OperatorCommand::ApprovePublisher { id, namespaces, .. }) => {
+                assert_eq!((id.as_str(), namespaces.len()), ("acme", 1));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            parse(&[&["operator", "approve-publisher", "--id", "acme"][..], &admin].concat()).command,
+            Command::Operator(OperatorCommand::ApprovePublisher { namespaces, .. }) if namespaces.is_empty()
+        ));
+        assert!(matches!(
+            parse(&[&["operator", "suspend-publisher", "--id", "acme", "--reason", "spam"][..], &admin].concat()).command,
+            Command::Operator(OperatorCommand::SuspendPublisher { .. })
+        ));
+        match parse(&[&["operator", "set-rate", "--publisher", "acme", "--uploads-per-day", "5"][..], &admin].concat()).command {
+            Command::Operator(OperatorCommand::SetRate { requests_per_minute, uploads_per_day, .. }) => {
+                assert_eq!((requests_per_minute, uploads_per_day), (None, Some(5)));
             }
             other => panic!("{other:?}"),
         }
@@ -182,16 +219,15 @@ mod tests {
             "u"
         ])
         .is_err());
+        assert!(Cli::try_parse_from(["axlr-registry", "operator", "issue-token", "--publisher", "acme", "--url", "u"]).is_err());
         assert!(Cli::try_parse_from([
             "axlr-registry",
             "operator",
-            "issue-token",
+            "set-rate",
             "--publisher",
             "acme",
-            "--scope",
-            "acme_*",
-            "--expires",
-            "tomorrow",
+            "--uploads-per-day",
+            "x",
             "--url",
             "u"
         ])

@@ -1,5 +1,5 @@
 //! `axlr-registry`: the command line of the AXLR tool registry. Publishers
-//! sign and upload bundles with an Ed25519 key and a scoped bearer token;
+//! enrol, sign bundles and sign every request with one Ed25519 key;
 //! reviewers and operators call the admin API over mutual TLS with a client
 //! certificate from the private CA (`docs/operations.md`); the operator
 //! signs the staging index with minisign on their own machine. One type

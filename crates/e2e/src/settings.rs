@@ -9,9 +9,8 @@ pub struct Settings {
     pub publish_url: String,
     /// `https://admin.DOMAIN`.
     pub admin_url: String,
-    /// A publisher token scoped to `e2e_*`.
-    pub token: String,
-    /// The publisher's key file.
+    /// The key file of the pre-approved publisher with namespace `e2e_*`;
+    /// it signs the bundle and every request.
     pub publisher_key: PathBuf,
     /// The reviewer-and-operator client identity, PEM.
     pub client_cert: PathBuf,
@@ -27,7 +26,6 @@ impl Settings {
         Some(Self {
             publish_url: var("REGISTRY_E2E_PUBLISH_URL")?,
             admin_url: var("REGISTRY_E2E_ADMIN_URL")?,
-            token: var("REGISTRY_E2E_TOKEN")?,
             publisher_key: var("REGISTRY_E2E_PUBLISHER_KEY")?.into(),
             client_cert: var("REGISTRY_E2E_CLIENT_CERT")?.into(),
             ca: var("REGISTRY_E2E_CA").map(Into::into),

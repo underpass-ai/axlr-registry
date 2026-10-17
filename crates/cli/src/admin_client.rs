@@ -1,6 +1,6 @@
 //! The admin API's routes, one method each. Bodies are in `docs/api.md`.
 
-use registry_domain::{KeyId, PublisherId, Scope, ToolName, Version};
+use registry_domain::{Contact, KeyId, PublisherId, Scope, ToolName, Version};
 
 use crate::{CliError, RevocationMode};
 
@@ -43,26 +43,42 @@ impl AdminClient {
         json(self.http.post(self.version_url(name, version, &format!("/{action}"))).json(&body).send().await?).await
     }
 
-    /// `POST /v1/publishers`.
+    /// `POST /v1/publishers`: a publisher the operator vouches for, active at once.
     pub async fn register_publisher(
         &self,
         id: &PublisherId,
         public_key_base64: &str,
         namespaces: &[Scope],
+        contact: &Contact,
     ) -> Result<serde_json::Value, CliError> {
-        let body = serde_json::json!({ "id": id, "public_key": public_key_base64, "namespaces": namespaces });
+        let body = serde_json::json!({ "id": id, "public_key": public_key_base64, "namespaces": namespaces, "contact": contact });
         json(self.http.post(format!("{}/v1/publishers", self.base)).json(&body).send().await?).await
     }
 
-    /// `POST /v1/publishers/{id}/tokens`; the answer carries the token once.
-    pub async fn issue_token(
+    /// `POST /v1/publishers/{id}/approve`, optionally narrowing the namespaces.
+    pub async fn approve_publisher(&self, publisher: &PublisherId, namespaces: Option<&[Scope]>) -> Result<serde_json::Value, CliError> {
+        let body = match namespaces {
+            Some(list) => serde_json::json!({ "namespaces": list }),
+            None => serde_json::json!({}),
+        };
+        json(self.http.post(format!("{}/v1/publishers/{}/approve", self.base, publisher.as_str())).json(&body).send().await?).await
+    }
+
+    /// `POST /v1/publishers/{id}/suspend`.
+    pub async fn suspend_publisher(&self, publisher: &PublisherId, reason: &str) -> Result<serde_json::Value, CliError> {
+        let body = serde_json::json!({ "reason": reason });
+        json(self.http.post(format!("{}/v1/publishers/{}/suspend", self.base, publisher.as_str())).json(&body).send().await?).await
+    }
+
+    /// `POST /v1/publishers/{id}/rate`; an absent limit restores the default.
+    pub async fn set_rate(
         &self,
         publisher: &PublisherId,
-        scopes: &[Scope],
-        expires_at: Option<&str>,
+        requests_per_minute: Option<u32>,
+        uploads_per_day: Option<u32>,
     ) -> Result<serde_json::Value, CliError> {
-        let body = serde_json::json!({ "scopes": scopes, "expires_at": expires_at });
-        json(self.http.post(format!("{}/v1/publishers/{}/tokens", self.base, publisher.as_str())).json(&body).send().await?).await
+        let body = serde_json::json!({ "requests_per_minute": requests_per_minute, "uploads_per_day": uploads_per_day });
+        json(self.http.post(format!("{}/v1/publishers/{}/rate", self.base, publisher.as_str())).json(&body).send().await?).await
     }
 
     /// `POST /v1/publishers/{id}/keys/{key id}/revoke`.

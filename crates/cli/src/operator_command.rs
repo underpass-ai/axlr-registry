@@ -1,10 +1,10 @@
-//! What the operator does: publishers, tokens, keys, and the signed index.
+//! What the operator does: publishers (register, approve, suspend, rate
+//! limits), keys, and the signed index.
 
 use std::path::PathBuf;
 
 use clap::Subcommand;
-use registry_domain::{KeyId, PublisherId, Scope};
-use time::format_description::well_known::Rfc3339;
+use registry_domain::{Contact, KeyId, PublisherId, Scope};
 use time::OffsetDateTime;
 
 use crate::{
@@ -23,15 +23,16 @@ fn key_id(raw: &str) -> Result<KeyId, String> {
     KeyId::parse(raw).map_err(|e| e.to_string())
 }
 
-fn rfc3339(raw: &str) -> Result<OffsetDateTime, String> {
-    OffsetDateTime::parse(raw, &Rfc3339).map_err(|e| format!("an RFC 3339 time such as 2027-01-01T00:00:00Z: {e}"))
+fn contact(raw: &str) -> Result<Contact, String> {
+    Contact::parse(raw).map_err(|e| e.to_string())
 }
 
 /// Operator commands. The index ones run on the operator's machine, where
 /// the minisign key lives; the others call the admin API.
 #[derive(Debug, Subcommand)]
 pub enum OperatorCommand {
-    /// Register a publisher with its first key and the names it may publish.
+    /// Register a publisher the operator vouches for: active at once, with
+    /// its first key and the names it may publish (no enrolment needed).
     RegisterPublisher {
         /// The publisher id, [a-z0-9][a-z0-9-]{1,31}.
         #[arg(long, value_parser = publisher_id)]
@@ -42,21 +43,49 @@ pub enum OperatorCommand {
         /// A name or prefix ending in *; repeat for more.
         #[arg(long = "namespace", required = true, value_parser = scope)]
         namespaces: Vec<Scope>,
+        /// How to reach the publisher.
+        #[arg(long, value_parser = contact)]
+        contact: Contact,
         /// The admin API.
         #[command(flatten)]
         admin: AdminConnection,
     },
-    /// Issue a bearer token to a publisher; it is shown once.
-    IssueToken {
+    /// Approve an enrolled (or suspended) publisher, optionally keeping only
+    /// some of its namespaces.
+    ApprovePublisher {
+        /// The publisher.
+        #[arg(long, value_parser = publisher_id)]
+        id: PublisherId,
+        /// Keep only these namespaces (a subset of the enrolled ones); repeat for more.
+        #[arg(long = "namespace", value_parser = scope)]
+        namespaces: Vec<Scope>,
+        /// The admin API.
+        #[command(flatten)]
+        admin: AdminConnection,
+    },
+    /// Suspend an active publisher: uploads refused, catalog entries untouched.
+    SuspendPublisher {
+        /// The publisher.
+        #[arg(long, value_parser = publisher_id)]
+        id: PublisherId,
+        /// Why, for the audit log.
+        #[arg(long, default_value = "")]
+        reason: String,
+        /// The admin API.
+        #[command(flatten)]
+        admin: AdminConnection,
+    },
+    /// Set a publisher's rate limits; an omitted limit returns to the default.
+    SetRate {
         /// The publisher.
         #[arg(long, value_parser = publisher_id)]
         publisher: PublisherId,
-        /// A name or prefix the token may publish; repeat for more.
-        #[arg(long = "scope", required = true, value_parser = scope)]
-        scopes: Vec<Scope>,
-        /// When the token stops working, RFC 3339; never when absent.
-        #[arg(long, value_parser = rfc3339)]
-        expires: Option<OffsetDateTime>,
+        /// Signed requests per minute (default 60).
+        #[arg(long)]
+        requests_per_minute: Option<u32>,
+        /// Uploads per UTC day (default 20).
+        #[arg(long)]
+        uploads_per_day: Option<u32>,
         /// The admin API.
         #[command(flatten)]
         admin: AdminConnection,
@@ -153,17 +182,17 @@ impl OperatorCommand {
     /// Runs the command.
     pub async fn run(self) -> Result<String, CliError> {
         let answer = match self {
-            Self::RegisterPublisher { id, public_key, namespaces, admin } => {
+            Self::RegisterPublisher { id, public_key, namespaces, contact, admin } => {
                 let key = PublisherPublicKeyFile::load(&public_key)?;
-                admin.client()?.register_publisher(&id, &key.to_base64(), &namespaces).await?
+                admin.client()?.register_publisher(&id, &key.to_base64(), &namespaces, &contact).await?
             }
-            Self::IssueToken { publisher, scopes, expires, admin } => {
-                let expires = expires.map(|t| t.format(&Rfc3339).expect("a time formats"));
-                let answer = admin.client()?.issue_token(&publisher, &scopes, expires.as_deref()).await?;
-                return Ok(format!(
-                    "{}\nThe token is shown once; the registry keeps only its digest.",
-                    serde_json::to_string_pretty(&answer)?
-                ));
+            Self::ApprovePublisher { id, namespaces, admin } => {
+                let narrowed = if namespaces.is_empty() { None } else { Some(namespaces.as_slice()) };
+                admin.client()?.approve_publisher(&id, narrowed).await?
+            }
+            Self::SuspendPublisher { id, reason, admin } => admin.client()?.suspend_publisher(&id, &reason).await?,
+            Self::SetRate { publisher, requests_per_minute, uploads_per_day, admin } => {
+                admin.client()?.set_rate(&publisher, requests_per_minute, uploads_per_day).await?
             }
             Self::RevokeKey { publisher, key_id, mode, admin } => admin.client()?.revoke_key(&publisher, &key_id, mode).await?,
             Self::PublishIndex { admin } => admin.client()?.publish_index().await?,
@@ -248,7 +277,7 @@ mod tests {
     use std::io::Cursor;
 
     use ed25519_dalek::SigningKey;
-    use registry_domain::{KeyId, PublisherId, Scope};
+    use registry_domain::{Contact, KeyId, PublisherId, Scope};
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -257,22 +286,45 @@ mod tests {
     use crate::{MinisignSecretKey, MinisignSignature, PublisherPublicKeyFile, RevocationMode};
 
     #[tokio::test]
-    async fn publisher_token_and_key_commands_send_their_bodies() {
+    async fn publisher_and_key_commands_send_their_bodies() {
         let server = MockServer::start().await;
         let dir = tempfile::tempdir().unwrap();
         let public = PublisherPublicKeyFile::new(SigningKey::from_bytes(&[2; 32]).verifying_key());
         public.save(&dir.path().join("acme.pub")).unwrap();
         Mock::given(method("POST"))
             .and(path("/v1/publishers"))
-            .and(body_json(serde_json::json!({"id": "acme", "public_key": public.to_base64(), "namespaces": ["acme_*", "acme"]})))
+            .and(body_json(serde_json::json!({
+                "id": "acme", "public_key": public.to_base64(), "namespaces": ["acme_*", "acme"], "contact": "ops@acme.example"
+            })))
             .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": "acme", "key_id": public.key_id().as_str()})))
             .expect(1)
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path("/v1/publishers/acme/tokens"))
-            .and(body_json(serde_json::json!({"scopes": ["acme_count"], "expires_at": "2027-01-01T00:00:00Z"})))
-            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"token": "secret-once"})))
+            .and(path("/v1/publishers/acme/approve"))
+            .and(body_json(serde_json::json!({"namespaces": ["acme_count"]})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": "acme", "status": "active"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/publishers/beta/approve"))
+            .and(body_json(serde_json::json!({})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": "beta", "status": "active"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/publishers/acme/suspend"))
+            .and(body_json(serde_json::json!({"reason": "spam"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": "acme", "status": "suspended"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/publishers/acme/rate"))
+            .and(body_json(serde_json::json!({"requests_per_minute": 600, "uploads_per_day": null})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"requests_per_minute": 600, "uploads_per_day": 20})))
             .expect(1)
             .mount(&server)
             .await;
@@ -288,22 +340,38 @@ mod tests {
             id: acme.clone(),
             public_key: dir.path().join("acme.pub"),
             namespaces: vec![Scope::parse("acme_*").unwrap(), Scope::parse("acme").unwrap()],
+            contact: Contact::parse("ops@acme.example").unwrap(),
             admin: admin(&server),
         }
         .run()
         .await
         .unwrap();
         assert!(out.contains(public.key_id().as_str()));
-        let out = OperatorCommand::IssueToken {
-            publisher: acme.clone(),
-            scopes: vec![Scope::parse("acme_count").unwrap()],
-            expires: Some(time::macros::datetime!(2027-01-01 00:00 UTC)),
+        let out = OperatorCommand::ApprovePublisher {
+            id: acme.clone(),
+            namespaces: vec![Scope::parse("acme_count").unwrap()],
             admin: admin(&server),
         }
         .run()
         .await
         .unwrap();
-        assert!(out.contains("secret-once") && out.contains("shown once"), "{out}");
+        assert!(out.contains("\"status\": \"active\""), "{out}");
+        OperatorCommand::ApprovePublisher { id: PublisherId::parse("beta").unwrap(), namespaces: vec![], admin: admin(&server) }
+            .run()
+            .await
+            .unwrap();
+        let out = OperatorCommand::SuspendPublisher { id: acme.clone(), reason: "spam".into(), admin: admin(&server) }.run().await.unwrap();
+        assert!(out.contains("suspended"), "{out}");
+        let out = OperatorCommand::SetRate {
+            publisher: acme.clone(),
+            requests_per_minute: Some(600),
+            uploads_per_day: None,
+            admin: admin(&server),
+        }
+        .run()
+        .await
+        .unwrap();
+        assert!(out.contains("\"requests_per_minute\": 600"), "{out}");
         let out = OperatorCommand::RevokeKey {
             publisher: acme,
             key_id: KeyId::parse("0123456789abcdef").unwrap(),

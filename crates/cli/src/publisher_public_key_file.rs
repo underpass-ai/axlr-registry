@@ -1,4 +1,5 @@
-//! The publisher's public key on disk: what the operator registers.
+//! The publisher's public key on disk: what `publisher enroll` sends and
+//! what the operator registers.
 
 use std::path::Path;
 

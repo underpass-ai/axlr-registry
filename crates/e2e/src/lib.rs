@@ -6,8 +6,7 @@
 //! |:--|:--|
 //! | `REGISTRY_E2E_PUBLISH_URL` | `https://api.DOMAIN` |
 //! | `REGISTRY_E2E_ADMIN_URL` | `https://admin.DOMAIN` |
-//! | `REGISTRY_E2E_TOKEN` | a token scoped to `e2e_*` |
-//! | `REGISTRY_E2E_PUBLISHER_KEY` | path to the publisher key file (`publisher keygen`) |
+//! | `REGISTRY_E2E_PUBLISHER_KEY` | path to the key file (`publisher keygen`) of a publisher registered with namespace `e2e_*`; it signs every request |
 //! | `REGISTRY_E2E_CLIENT_CERT` | path to a reviewer-and-operator identity PEM |
 //! | `REGISTRY_E2E_CA` | optional extra root to trust |
 

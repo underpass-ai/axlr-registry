@@ -51,7 +51,7 @@ impl Scenario {
         let tool = self.prepare_tool(fixture, dir.path())?;
         let key = PublisherKeyFile::load(&self.settings.publisher_key)?;
         let signature = SignatureFile::sign(key.signing_key(), tool.bundle().bundle_digest());
-        let publish = PublishClient::new(&self.settings.publish_url, &self.settings.token)?;
+        let publish = PublishClient::new(&self.settings.publish_url, key.signing_key().clone())?;
         let uploaded = publish.upload(&UploadRequest::new(&tool, signature)).await?;
         if uploaded["status"] != "scanned" {
             return Err(E2eError::Unexpected(format!("the upload was not accepted for review: {uploaded}")));
@@ -140,7 +140,6 @@ mod tests {
         let settings = Settings {
             publish_url: "https://api.example.org".into(),
             admin_url: "https://admin.example.org".into(),
-            token: "t".repeat(40),
             publisher_key: "key".into(),
             client_cert: "cert".into(),
             ca: None,

@@ -112,10 +112,10 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
       - uses: aws-actions/setup-sam@v2
-      - name: Is the e2e token set?
+      - name: Is the e2e publisher key set?
         env:
-          TOKEN: ${{ secrets.STAGING_E2E_TOKEN }}
-        run: echo "HAS_E2E_TOKEN=$([ -n "$TOKEN" ] && echo true || echo false)" >> "$GITHUB_ENV"
+          KEY: ${{ secrets.STAGING_E2E_PUBLISHER_KEY }}
+        run: echo "HAS_E2E_KEY=$([ -n "$KEY" ] && echo true || echo false)" >> "$GITHUB_ENV"
       - name: Edge web ACL (us-east-1)
         id: edge
         run: |
@@ -131,19 +131,19 @@ jobs:
           CloudFrontCertificateArn=${{ vars.STAGING_CLOUDFRONT_CERT_ARN }} TruststoreBucket=${{ vars.STAGING_TRUSTSTORE_BUCKET }} TruststoreVersion=${{ vars.STAGING_TRUSTSTORE_VERSION }}
           IndexPublicKey=${{ vars.STAGING_INDEX_PUBLIC_KEY }}
       - uses: dtolnay/rust-toolchain@stable
-        if: ${{ env.HAS_E2E_TOKEN == 'true' }}
+        if: ${{ env.HAS_E2E_KEY == 'true' }}
       - uses: Swatinem/rust-cache@v2
-        if: ${{ env.HAS_E2E_TOKEN == 'true' }}
+        if: ${{ env.HAS_E2E_KEY == 'true' }}
         with:
           key: e2e
       - name: End-to-end test against staging
-        # Skipped until the stack is bootstrapped (principals, the e2e publisher and its token).
-        if: ${{ env.HAS_E2E_TOKEN == 'true' }}
+        # Skipped until the stack is bootstrapped (principals and the pre-approved e2e publisher).
+        if: ${{ env.HAS_E2E_KEY == 'true' }}
         env:
           REGISTRY_E2E_PUBLISH_URL: https://api.${{ vars.STAGING_DOMAIN }}
           REGISTRY_E2E_ADMIN_URL: https://admin.${{ vars.STAGING_DOMAIN }}
-          REGISTRY_E2E_TOKEN: ${{ secrets.STAGING_E2E_TOKEN }}
-          # A publisher key file from `axlr-registry publisher keygen`, registered for the e2e publisher with namespace e2e_*.
+          # A publisher key file from `axlr-registry publisher keygen`, registered by `operator register-publisher`
+          # for the e2e publisher with namespace e2e_*; it signs the bundle and every request.
           STAGING_E2E_PUBLISHER_KEY: ${{ secrets.STAGING_E2E_PUBLISHER_KEY }}
           # A reviewer-and-operator identity PEM (clients/<id>/identity.pem from scripts/ca.sh) registered as a principal.
           STAGING_E2E_CLIENT_IDENTITY: ${{ secrets.STAGING_E2E_CLIENT_IDENTITY }}
