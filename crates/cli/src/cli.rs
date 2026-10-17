@@ -165,6 +165,14 @@ mod tests {
             Command::Operator(OperatorCommand::RevokeKey { mode, .. }) => assert_eq!(mode, RevocationMode::Rotation),
             other => panic!("{other:?}"),
         }
+        match parse(&[&["operator", "add-key", "--publisher", "acme", "--public-key", "new.pub"][..], &admin].concat()).command {
+            Command::Operator(OperatorCommand::AddKey { publisher, public_key, admin }) => {
+                assert_eq!((publisher.as_str(), public_key.to_str()), ("acme", Some("new.pub")));
+                assert_eq!(admin.cert.as_ref().unwrap().to_str(), Some("me.pem"));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(Cli::try_parse_from(["axlr-registry", "operator", "add-key", "--publisher", "acme", "--url", "u"]).is_err(), "no key file");
         match parse(&[&["operator", "approve-publisher", "--id", "acme", "--namespace", "acme_count"][..], &admin].concat()).command {
             Command::Operator(OperatorCommand::ApprovePublisher { id, namespaces, .. }) => {
                 assert_eq!((id.as_str(), namespaces.len()), ("acme", 1));

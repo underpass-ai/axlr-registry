@@ -90,6 +90,19 @@ pub enum OperatorCommand {
         #[command(flatten)]
         admin: AdminConnection,
     },
+    /// Add a key to a publisher's record without a request signed by one of
+    /// its keys: for a publisher whose only key is lost.
+    AddKey {
+        /// The publisher.
+        #[arg(long, value_parser = publisher_id)]
+        publisher: PublisherId,
+        /// The new public key file (from `publisher keygen`).
+        #[arg(long)]
+        public_key: PathBuf,
+        /// The admin API.
+        #[command(flatten)]
+        admin: AdminConnection,
+    },
     /// Revoke a publisher key, as a rotation or a compromise.
     RevokeKey {
         /// The publisher.
@@ -193,6 +206,10 @@ impl OperatorCommand {
             Self::SuspendPublisher { id, reason, admin } => admin.client()?.suspend_publisher(&id, &reason).await?,
             Self::SetRate { publisher, requests_per_minute, uploads_per_day, admin } => {
                 admin.client()?.set_rate(&publisher, requests_per_minute, uploads_per_day).await?
+            }
+            Self::AddKey { publisher, public_key, admin } => {
+                let key = PublisherPublicKeyFile::load(&public_key)?;
+                admin.client()?.add_key(&publisher, &key.to_base64()).await?
             }
             Self::RevokeKey { publisher, key_id, mode, admin } => admin.client()?.revoke_key(&publisher, &key_id, mode).await?,
             Self::PublishIndex { admin } => admin.client()?.publish_index().await?,
@@ -329,6 +346,13 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("POST"))
+            .and(path("/v1/publishers/acme/keys"))
+            .and(body_json(serde_json::json!({"public_key": public.to_base64()})))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": "acme", "key_id": public.key_id().as_str()})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
             .and(path("/v1/publishers/acme/keys/0123456789abcdef/revoke"))
             .and(body_json(serde_json::json!({"mode": "compromise"})))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"yanked": 2})))
@@ -372,6 +396,18 @@ mod tests {
         .await
         .unwrap();
         assert!(out.contains("\"requests_per_minute\": 600"), "{out}");
+        let out = OperatorCommand::AddKey { publisher: acme.clone(), public_key: dir.path().join("acme.pub"), admin: admin(&server) }
+            .run()
+            .await
+            .unwrap();
+        assert!(out.contains(&format!("\"key_id\": \"{}\"", public.key_id().as_str())), "{out}");
+        assert!(
+            OperatorCommand::AddKey { publisher: acme.clone(), public_key: dir.path().join("missing.pub"), admin: admin(&server) }
+                .run()
+                .await
+                .is_err(),
+            "a missing key file was sent"
+        );
         let out = OperatorCommand::RevokeKey {
             publisher: acme,
             key_id: KeyId::parse("0123456789abcdef").unwrap(),

@@ -6,16 +6,16 @@ use lambda_http::http::StatusCode;
 use lambda_http::{Body, Request, Response};
 use registry_application::ports::{AuditLog, Clock, IndexTrigger, IndexWriter, PrincipalRepository, PublisherRepository, ToolRepository};
 use registry_application::use_cases::{
-    ApprovePublisher, ApproveVersion, AuthenticatePrincipal, ListVersions, PublishSignedIndex, ReadStagingIndex, RegisterPublisher,
-    RejectVersion, RevokeKey, SetPublisherRate, ShowVersion, SuspendPublisher, YankVersion,
+    AddPublisherKeyAsOperator, ApprovePublisher, ApproveVersion, AuthenticatePrincipal, ListVersions, PublishSignedIndex, ReadStagingIndex,
+    RegisterPublisher, RejectVersion, RevokeKey, SetPublisherRate, ShowVersion, SuspendPublisher, YankVersion,
 };
 use registry_application::{ApplicationError, Principal};
 use registry_domain::{PublisherId, PublisherStatus, RegistryPublicKey, Status, ToolName, Version};
 
 use crate::{
-    AdminRoute, ApprovePublisherRequest, ClientCertificate, ClientGate, HttpError, IndexSignatureRequest, JsonBody, JsonResponse,
-    PublisherResponse, RateResponse, RegisterPublisherRequest, ReviewRequest, ReviewResponse, RevokeKeyRequest, RevokeKeyResponse,
-    SetRateRequest, VersionStatusResponse,
+    AddKeyRequest, AddKeyResponse, AdminRoute, ApprovePublisherRequest, ClientCertificate, ClientGate, HttpError, IndexSignatureRequest,
+    JsonBody, JsonResponse, PublisherResponse, RateResponse, RegisterPublisherRequest, ReviewRequest, ReviewResponse, RevokeKeyRequest,
+    RevokeKeyResponse, SetRateRequest, VersionStatusResponse,
 };
 
 /// The admin API over its ports.
@@ -89,6 +89,16 @@ where
                     .execute(&principal, &id, rate)
                     .await?;
                 Ok(JsonResponse::json(StatusCode::OK, &RateResponse::of(id.as_str(), &in_force)))
+            }
+            AdminRoute::AddKey(id) => {
+                let key = JsonBody::parse::<AddKeyRequest>(&request)?.into_key()?;
+                let added = AddPublisherKeyAsOperator { publishers: self.publishers, audit: self.audit, clock: self.clock }
+                    .execute(&principal, &id, key)
+                    .await?;
+                Ok(JsonResponse::json(
+                    StatusCode::CREATED,
+                    &AddKeyResponse { id: id.as_str().to_owned(), key_id: added.as_str().to_owned() },
+                ))
             }
             AdminRoute::RevokeKey(id, key) => {
                 let mode = JsonBody::parse::<RevokeKeyRequest>(&request)?.mode;
@@ -198,7 +208,7 @@ mod tests {
     use super::AdminApi;
     use crate::client_certificate::tests::{pem_of, request_with_certificate};
     use crate::upload_request::tests::signed_upload;
-    use crate::{PublisherResponse, RateResponse, ReviewResponse, RevokeKeyResponse, VersionStatusResponse};
+    use crate::{AddKeyResponse, PublisherResponse, RateResponse, ReviewResponse, RevokeKeyResponse, VersionStatusResponse};
 
     const OPS: &[u8] = b"operator certificate";
     const ANA: &[u8] = b"reviewer certificate";
@@ -475,6 +485,44 @@ mod tests {
         assert!(publisher.keys()[0].revoked_at().is_some());
         let twice = api.handle(post(Some(OPS), &path, serde_json::json!({}))).await;
         assert_eq!(twice.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn an_operator_adds_a_key_to_a_publisher_without_a_signed_request() {
+        let w = world();
+        registered(&w).await;
+        let api = api(&w);
+        let beta_key = SigningKey::from_bytes(&[9; 32]);
+        EnrollPublisher { publishers: &w.publishers, audit: &w.audit, clock: &w.clock }
+            .execute(
+                PublisherId::parse("beta").unwrap(),
+                beta_key.verifying_key(),
+                vec![Scope::parse("beta_*").unwrap()],
+                Contact::parse("ops@beta.example").unwrap(),
+            )
+            .await
+            .unwrap();
+        let encode = |key: &SigningKey| base64::engine::general_purpose::STANDARD.encode(key.verifying_key().as_bytes());
+        let replacement = SigningKey::from_bytes(&[10; 32]);
+        let body = serde_json::json!({ "public_key": encode(&replacement) });
+        let reviewer = api.handle(post(Some(ANA), "/v1/publishers/acme/keys", body.clone())).await;
+        assert_eq!(reviewer.status(), StatusCode::FORBIDDEN);
+        let taken = api.handle(post(Some(OPS), "/v1/publishers/acme/keys", serde_json::json!({ "public_key": encode(&beta_key) }))).await;
+        assert_eq!(taken.status(), StatusCode::CONFLICT, "{:?}", taken.body());
+        let unknown = api.handle(post(Some(OPS), "/v1/publishers/gamma/keys", body.clone())).await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        let bad = api.handle(post(Some(OPS), "/v1/publishers/acme/keys", serde_json::json!({ "public_key": "AAAA" }))).await;
+        assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+        let added = api.handle(post(Some(OPS), "/v1/publishers/acme/keys", body.clone())).await;
+        assert_eq!(added.status(), StatusCode::CREATED, "{:?}", added.body());
+        let answer: AddKeyResponse = serde_json::from_slice(added.body().as_ref()).unwrap();
+        let expected = registry_domain::KeyId::of(&replacement.verifying_key());
+        assert_eq!((answer.id.as_str(), answer.key_id.as_str()), ("acme", expected.as_str()));
+        let acme = w.publishers.find(&PublisherId::parse("acme").unwrap()).await.unwrap().unwrap();
+        assert_eq!(acme.keys().len(), 2);
+        let twice = api.handle(post(Some(OPS), "/v1/publishers/acme/keys", body)).await;
+        assert_eq!(twice.status(), StatusCode::CONFLICT);
+        assert_eq!(w.trigger.triggered(), 0, "adding a key rebuilt the index");
     }
 
     #[tokio::test]

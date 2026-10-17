@@ -8,9 +8,9 @@ use std::net::IpAddr;
 use ed25519_dalek::SigningKey;
 use registry_application::ports::{IdempotencyStore as _, IndexTrigger as _, PublisherRepository as _};
 use registry_application::use_cases::{
-    AddPublisherKey, ApprovePublisher, ApproveVersion, AuthenticatePrincipal, AuthenticateRequest, EnrollPublisher, KeyRevocationMode,
-    PublishIndex, PublishSignedIndex, QueryVersion, RecordTestReport, RegisterPublisher, RejectVersion, RequestKind, RevokeKey,
-    SetPublisherRate, SubmitVersion, SuspendPublisher, YankVersion, NONCE_TTL,
+    AddPublisherKey, AddPublisherKeyAsOperator, ApprovePublisher, ApproveVersion, AuthenticatePrincipal, AuthenticateRequest,
+    EnrollPublisher, KeyRevocationMode, PublishIndex, PublishSignedIndex, QueryVersion, RecordTestReport, RegisterPublisher, RejectVersion,
+    RequestKind, RevokeKey, SetPublisherRate, SubmitVersion, SuspendPublisher, YankVersion, NONCE_TTL,
 };
 use registry_application::{ApplicationError, AuthenticationFailure, IdempotentResponse, Principal, RateSubject, Role};
 use registry_domain::{
@@ -384,6 +384,39 @@ async fn a_publisher_enrols_and_an_operator_approves_suspends_and_sets_its_rate(
         actions,
         ["register_publisher", "enroll", "enroll", "approve_publisher", "suspend_publisher", "approve_publisher", "set_rate", "add_key"]
     );
+}
+
+#[tokio::test]
+async fn an_operator_adds_a_key_to_a_publisher_that_lost_its_own() {
+    let w = world().await;
+    let beta = PublisherId::parse("beta").unwrap();
+    let beta_key = SigningKey::from_bytes(&[8; 32]);
+    EnrollPublisher { publishers: &w.publishers, audit: &w.audit, clock: &w.clock }
+        .execute(beta.clone(), beta_key.verifying_key(), vec![Scope::parse("beta_*").unwrap()], contact())
+        .await
+        .unwrap();
+    let add_key = AddPublisherKeyAsOperator { publishers: &w.publishers, audit: &w.audit, clock: &w.clock };
+    let replacement = SigningKey::from_bytes(&[11; 32]);
+    assert!(matches!(add_key.execute(&reviewer("ana"), &acme(), replacement.verifying_key()).await, Err(ApplicationError::Forbidden(_))));
+    assert!(
+        matches!(add_key.execute(&operator(), &acme(), beta_key.verifying_key()).await, Err(ApplicationError::Domain(_))),
+        "beta's key went to acme"
+    );
+    assert!(matches!(
+        add_key.execute(&operator(), &PublisherId::parse("gamma").unwrap(), replacement.verifying_key()).await,
+        Err(ApplicationError::NotFound(_))
+    ));
+    let added = add_key.execute(&operator(), &acme(), replacement.verifying_key()).await.unwrap();
+    assert_eq!(added, KeyId::of(&replacement.verifying_key()));
+    assert_eq!(w.publishers.find_by_key(&added).await.unwrap().unwrap().id(), &acme());
+    assert_eq!(publisher(&w).await.keys().len(), 2);
+    assert!(matches!(add_key.execute(&operator(), &acme(), replacement.verifying_key()).await, Err(ApplicationError::Domain(_))), "twice");
+    // A pending publisher may be given a key before its approval.
+    let pending_key = SigningKey::from_bytes(&[12; 32]);
+    add_key.execute(&operator(), &beta, pending_key.verifying_key()).await.unwrap();
+    assert_eq!(w.publishers.find(&beta).await.unwrap().unwrap().status(), PublisherStatus::Pending);
+    let last = w.audit.entries().last().cloned().unwrap();
+    assert_eq!((last.action, last.actor.as_str(), last.subject.as_str()), ("add_key", "ops", "beta"));
 }
 
 // --- The ordered checks of §3 and the windows of §4 ---

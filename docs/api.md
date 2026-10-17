@@ -72,6 +72,7 @@ Mutual TLS with a certificate from the private CA (`operations.md`); API Gateway
 | `POST /v1/publishers/{id}/approve` | `{"namespaces": ["acme_*"]}` (optional: keep only these, a subset of the enrolled ones) or an empty body | `200` `{"id", "status": "active", "namespaces"}`; `409` when already active; `400` when a namespace widens the enrolled ones; `404` | `ApprovePublisher` (also reactivates a suspended publisher) |
 | `POST /v1/publishers/{id}/suspend` | `{"reason": "…"}` (may be empty or absent) | `200` `{"id", "status": "suspended", "namespaces"}`; `409` unless active | `SuspendPublisher` |
 | `POST /v1/publishers/{id}/rate` | `{"requests_per_minute": 600, "uploads_per_day": null}` (a `null` or absent limit restores the default) | `200` `{"id", "requests_per_minute", "uploads_per_day"}` the limits in force; `400` on zero | `SetPublisherRate` |
+| `POST /v1/publishers/{id}/keys` | `{"public_key": "<base64 32-byte Ed25519 key>"}` | `201` `{"id", "key_id"}`: another key on the record, no request signed by its keys needed (a publisher whose only key is lost); `409` when the key is already registered; `404`; operators only | `AddPublisherKeyAsOperator` |
 | `POST /v1/publishers/{id}/keys/{key_id}/revoke` | `{"mode": "rotation" \| "compromise"}` (compromise when absent) | `200` `{"yanked": <count>, "index_rebuild"}` | `RevokeKey` |
 | `POST /v1/index/publish` | | `202` `{"index_rebuild": "scheduled"}` after invoking `index-publisher`; operators only | `PublishIndex` through the trigger |
 | `POST /v1/index/signature` | `{"signature": "<the four lines of index.json.minisig>"}` | `200` `{"published": true, "index_sha256"}`; `400` when the signature does not verify against the staging index and the registry's minisign public key | `PublishSignedIndex` |
@@ -82,7 +83,7 @@ The three `GET` routes the CLI's `review list`, `review show` and `operator fetc
 
 ### Not served yet
 
-An operator `add-key` (`docs/client-identity.md` §2) that registers another key on a publisher's record without a request signed by one of its keys; a publisher whose only key is lost enrols again under a new id, or the operator registers a new publisher, until then. Also not verified against a deployed stack: that API Gateway hands the Lambda the query string exactly as sent (no publish route carries one today).
+Not verified against a deployed stack: that API Gateway hands the Lambda the query string exactly as sent (no publish route carries one today).
 
 ## Who calls what
 

@@ -163,14 +163,14 @@ Publishers hold one Ed25519 key each and sign every request with it ([`client-id
 
 - **Vouched for.** The operator registers a publisher from its public key file, active at once: `axlr-registry operator register-publisher --id e2e --public-key e2e.key.pub --namespace 'e2e_*' --contact ci@example --url … --cert …`. This is how the end-to-end publisher of the release job exists: it is pre-approved and never enrols. Its secret key is the `STAGING_E2E_PUBLISHER_KEY` secret (the contents of the key file); the old `STAGING_E2E_TOKEN` secret is deleted and the release job now gates the e2e test on the key.
 
-Afterwards: `suspend-publisher --id acme --reason …` blocks a publisher (uploads refused with 403 `suspended`, catalog entries untouched) and `approve-publisher` lifts it; `set-rate --publisher acme --requests-per-minute 600 --uploads-per-day 50` overrides the per-key limits (60 per minute and 20 per day by default; omit a flag to restore its default); `revoke-key` is unchanged. A publisher adds a second key itself (`POST /v1/publishers/{id}/keys`, signed with the first); the operator-side `add-key` of the contract is not served yet.
+Afterwards: `suspend-publisher --id acme --reason …` blocks a publisher (uploads refused with 403 `suspended`, catalog entries untouched) and `approve-publisher` lifts it; `set-rate --publisher acme --requests-per-minute 600 --uploads-per-day 50` overrides the per-key limits (60 per minute and 20 per day by default; omit a flag to restore its default); `revoke-key` is unchanged. A publisher adds a second key itself (`POST /v1/publishers/{id}/keys`, signed with the first); when its only key is lost, the operator adds one from the new public key file: `add-key --publisher acme --public-key acme-new.key.pub` (the same route on the admin API, no signed request), then revokes the lost one.
 
 Re-bootstrapping a stack that ran with tokens: the publisher META items lack `status`, `contact` and the rate attributes, and no key has its `KEYID#` pointer, so the old records do not load. Delete each publisher's items (the `PUB#<id>` partition and the `TOKEN#` pointers) and register the publishers again with `register-publisher`; the e2e publisher keeps its key file. Used nonces and rate windows live in `NONCE#` and `RATE#` items that the table's TTL on `expires_at` removes.
 
 ## Follow-ups
 
 - A `register-principal` command over the admin API would replace the `put-item` in step 3 once the first operator exists; today `PrincipalRepository` is read-only.
-- An operator `add-key` route, and a migration for publisher items written before signed requests (step 8 registers them again instead).
+- A migration for publisher items written before signed requests (step 8 registers them again instead).
 - API Gateway's mTLS checks the chain only; expired client certificates are refused but there is no revocation list. The principals table is the revocation list.
 
 ## GitHub deploy role (OIDC)

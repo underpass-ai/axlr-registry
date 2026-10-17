@@ -55,6 +55,7 @@ A scan is a pure function of the bundle, so the same bundle always yields the sa
 | `EnrollPublisher` | the publisher, signed with the key being enrolled | id unused or pending | pending `Publisher`; `PublisherEnrolled` |
 | `ApprovePublisher`, `SuspendPublisher`, `SetPublisherRate` | operator | pending or suspended → active; active → suspended | status or limits changed; `PublisherApproved` / `PublisherSuspended` |
 | `AddPublisherKey` | the publisher, signed with one of its keys | key id unused | another key; `KeyAdded` |
+| `AddPublisherKeyAsOperator` | operator | key id unused by another publisher | another key on any publisher's record, for a lost key; audited as `add_key` |
 | `AuthenticateRequest` | registry, before every publish route | the ordered checks of `client-identity.md` §3 | the publisher and the key, or the exact refusal |
 | `RevokeKey` | operator | | `KeyRevoked` (carried in the next index) |
 | `Submit` | publisher (authenticated request) | publisher active and the name inside its namespaces; name unowned or owned by this publisher; version greater than the latest; bundle valid; signature verifies | `ToolVersion` in `submitted`; `VersionSubmitted` |

@@ -81,6 +81,13 @@ impl AdminClient {
         json(self.http.post(format!("{}/v1/publishers/{}/rate", self.base, publisher.as_str())).json(&body).send().await?).await
     }
 
+    /// `POST /v1/publishers/{id}/keys`: the operator adds `public_key`
+    /// (base64) to a publisher's record, no signed request needed.
+    pub async fn add_key(&self, publisher: &PublisherId, public_key_base64: &str) -> Result<serde_json::Value, CliError> {
+        let body = serde_json::json!({ "public_key": public_key_base64 });
+        json(self.http.post(format!("{}/v1/publishers/{}/keys", self.base, publisher.as_str())).json(&body).send().await?).await
+    }
+
     /// `POST /v1/publishers/{id}/keys/{key id}/revoke`.
     pub async fn revoke_key(&self, publisher: &PublisherId, key: &KeyId, mode: RevocationMode) -> Result<serde_json::Value, CliError> {
         let body = serde_json::json!({ "mode": mode });

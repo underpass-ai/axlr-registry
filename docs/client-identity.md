@@ -1,6 +1,6 @@
 # Client identity: one key per person, signed requests, per-key rate limits
 
-Status: decided with Tirso on 17 Oct 2026; §6 implemented on 18 Oct 2026 (`docs/api.md` has the routes as served; the operator `add-key` of §2 is not served yet, and the staging stack has not been re-bootstrapped). This replaces bearer tokens on the publish API; the admin API keeps mTLS, the catalog stays static behind CloudFront. The AXLR console and the `axlr-registry` CLI are the two clients; both follow this contract exactly, so the registry and the console can be built in parallel against it.
+Status: decided with Tirso on 17 Oct 2026; §6 implemented on 18 Oct 2026 (`docs/api.md` has the routes as served, the operator `add-key` of §2 included since 18 Oct 2026; the staging stack has not been re-bootstrapped). This replaces bearer tokens on the publish API; the admin API keeps mTLS, the catalog stays static behind CloudFront. The AXLR console and the `axlr-registry` CLI are the two clients; both follow this contract exactly, so the registry and the console can be built in parallel against it.
 
 ## 1. The key
 

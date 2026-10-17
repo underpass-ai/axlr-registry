@@ -56,6 +56,7 @@ Refusals of a signed request: 401 `stale`, `unknown_key`, `bad_signature`, `repl
 | `POST /v1/publishers/{id}/approve` | `{namespaces?}` | activates a pending or suspended publisher, optionally keeping only some namespaces (operator) |
 | `POST /v1/publishers/{id}/suspend` | `{reason?}` | blocks a publisher; its catalog entries stay (operator) |
 | `POST /v1/publishers/{id}/rate` | `{requests_per_minute?, uploads_per_day?}` | overrides its rate limits (operator) |
+| `POST /v1/publishers/{id}/keys` | `{public_key}` | adds a key to the record, no signed request needed (operator) |
 | `POST /v1/publishers/{id}/keys/{key_id}/revoke` | `{mode: rotation \| compromise}` | revokes a key; compromise yanks what it signed; rebuilds the index (operator) |
 | `POST /v1/versions/{name}/{version}/approve` \| `reject` \| `yank` | `{reason}` | the review decision; approve and yank rebuild the index (reviewer or operator) |
 | `POST /v1/index/publish` | | asks `index-publisher` for a rebuild (operator) |
@@ -81,6 +82,7 @@ Statuses: domain `Invalid` 400, `Unauthorized` 401, `Forbidden` 403, `NotFound` 
 | `operator approve-publisher --id <id> [--namespace <scope>…]` | activates an enrolled (or suspended) publisher, optionally keeping only some namespaces |
 | `operator suspend-publisher --id <id> [--reason …]` | blocks a publisher |
 | `operator set-rate --publisher <id> [--requests-per-minute N] [--uploads-per-day N]` | overrides its rate limits; an omitted flag restores the default |
+| `operator add-key --publisher <id> --public-key <file.pub>` | adds a key to a publisher's record without a signed request (its only key is lost) |
 | `operator revoke-key --publisher <id> --key-id <16 hex> --mode rotation\|compromise` | revokes a key; compromise yanks what it signed |
 | `operator publish-index` | rebuilds the unsigned index in staging |
 | `operator fetch-index [--out index.json]` | downloads the staging index to sign |

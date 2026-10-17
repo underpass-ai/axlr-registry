@@ -1,6 +1,7 @@
 //! One use case per file; each is a command the API or a Lambda runs.
 
 mod add_publisher_key;
+mod add_publisher_key_as_operator;
 mod approve_publisher;
 mod approve_version;
 mod authenticate_principal;
@@ -26,6 +27,7 @@ mod version_report;
 mod yank_version;
 
 pub use add_publisher_key::AddPublisherKey;
+pub use add_publisher_key_as_operator::AddPublisherKeyAsOperator;
 pub use approve_publisher::ApprovePublisher;
 pub use approve_version::ApproveVersion;
 pub use authenticate_principal::AuthenticatePrincipal;
