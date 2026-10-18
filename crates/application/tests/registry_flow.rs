@@ -10,7 +10,7 @@ use registry_application::ports::{IdempotencyStore as _, IndexTrigger as _, Publ
 use registry_application::use_cases::{
     AddPublisherKey, AddPublisherKeyAsOperator, ApprovePublisher, ApproveVersion, AuthenticatePrincipal, AuthenticateRequest,
     EnrollPublisher, KeyRevocationMode, PublishIndex, PublishSignedIndex, QueryVersion, RecordTestReport, RegisterPublisher, RejectVersion,
-    RequestKind, RevokeKey, SetPublisherRate, SubmitVersion, SuspendPublisher, YankVersion, NONCE_TTL,
+    RequestKind, RevokeKey, SetPublisherNamespaces, SetPublisherRate, SubmitVersion, SuspendPublisher, YankVersion, NONCE_TTL,
 };
 use registry_application::{ApplicationError, AuthenticationFailure, IdempotentResponse, Principal, RateSubject, Role};
 use registry_domain::{
@@ -369,6 +369,27 @@ async fn a_publisher_enrols_and_an_operator_approves_suspends_and_sets_its_rate(
     assert_eq!(set_rate.execute(&operator(), &beta, rate).await.unwrap(), rate);
     assert_eq!(w.publishers.find(&beta).await.unwrap().unwrap().rate().requests_per_minute().max(), 2);
 
+    let set_namespaces = SetPublisherNamespaces { publishers: &w.publishers, audit: &w.audit, clock: &w.clock };
+    let every = vec![Scope::parse("*").unwrap()];
+    assert!(matches!(set_namespaces.execute(&reviewer("ana"), &beta, every.clone()).await, Err(ApplicationError::Forbidden(_))));
+    assert!(matches!(
+        set_namespaces.execute(&operator(), &PublisherId::parse("ghost").unwrap(), every.clone()).await,
+        Err(ApplicationError::NotFound(_))
+    ));
+    assert!(matches!(set_namespaces.execute(&operator(), &beta, vec![]).await, Err(ApplicationError::Domain(_))));
+    assert!(
+        matches!(
+            enroll
+                .execute(PublisherId::parse("delta").unwrap(), SigningKey::from_bytes(&[12; 32]).verifying_key(), every.clone(), contact())
+                .await,
+            Err(ApplicationError::Domain(_))
+        ),
+        "enrolment granted *"
+    );
+    assert_eq!(set_namespaces.execute(&operator(), &beta, every.clone()).await.unwrap(), (PublisherStatus::Active, every.clone()));
+    assert!(w.publishers.find(&beta).await.unwrap().unwrap().owns(&ToolName::parse("anything_at_all").unwrap()));
+    set_namespaces.execute(&operator(), &beta, namespaces()).await.unwrap();
+
     let add_key = AddPublisherKey { publishers: &w.publishers, audit: &w.audit, clock: &w.clock };
     let beta_now = w.publishers.find(&beta).await.unwrap().unwrap();
     let third = SigningKey::from_bytes(&[10; 32]);
@@ -382,7 +403,18 @@ async fn a_publisher_enrols_and_an_operator_approves_suspends_and_sets_its_rate(
     let actions: Vec<&str> = w.audit.entries().iter().map(|e| e.action).collect();
     assert_eq!(
         actions,
-        ["register_publisher", "enroll", "enroll", "approve_publisher", "suspend_publisher", "approve_publisher", "set_rate", "add_key"]
+        [
+            "register_publisher",
+            "enroll",
+            "enroll",
+            "approve_publisher",
+            "suspend_publisher",
+            "approve_publisher",
+            "set_rate",
+            "set_namespaces",
+            "set_namespaces",
+            "add_key"
+        ]
     );
 }
 

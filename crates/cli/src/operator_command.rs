@@ -1,5 +1,5 @@
-//! What the operator does: publishers (register, approve, suspend, rate
-//! limits), keys, and the signed index.
+//! What the operator does: publishers (register, approve, suspend,
+//! namespaces, rate limits), keys, and the signed index.
 
 use std::path::PathBuf;
 
@@ -71,6 +71,19 @@ pub enum OperatorCommand {
         /// Why, for the audit log.
         #[arg(long, default_value = "")]
         reason: String,
+        /// The admin API.
+        #[command(flatten)]
+        admin: AdminConnection,
+    },
+    /// Replace a publisher's namespaces, widening or narrowing them; `*`
+    /// grants every name (only an operator can).
+    SetNamespaces {
+        /// The publisher.
+        #[arg(long, value_parser = publisher_id)]
+        id: PublisherId,
+        /// A name, a prefix ending in *, or * alone; repeat for more.
+        #[arg(long = "namespace", required = true, value_parser = scope)]
+        namespaces: Vec<Scope>,
         /// The admin API.
         #[command(flatten)]
         admin: AdminConnection,
@@ -204,6 +217,7 @@ impl OperatorCommand {
                 admin.client()?.approve_publisher(&id, narrowed).await?
             }
             Self::SuspendPublisher { id, reason, admin } => admin.client()?.suspend_publisher(&id, &reason).await?,
+            Self::SetNamespaces { id, namespaces, admin } => admin.client()?.set_namespaces(&id, &namespaces).await?,
             Self::SetRate { publisher, requests_per_minute, uploads_per_day, admin } => {
                 admin.client()?.set_rate(&publisher, requests_per_minute, uploads_per_day).await?
             }
@@ -346,6 +360,15 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("POST"))
+            .and(path("/v1/publishers/acme/namespaces"))
+            .and(body_json(serde_json::json!({"namespaces": ["*"]})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": "acme", "status": "active", "namespaces": ["*"]})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
             .and(path("/v1/publishers/acme/keys"))
             .and(body_json(serde_json::json!({"public_key": public.to_base64()})))
             .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": "acme", "key_id": public.key_id().as_str()})))
@@ -396,6 +419,11 @@ mod tests {
         .await
         .unwrap();
         assert!(out.contains("\"requests_per_minute\": 600"), "{out}");
+        let out = OperatorCommand::SetNamespaces { id: acme.clone(), namespaces: vec![Scope::parse("*").unwrap()], admin: admin(&server) }
+            .run()
+            .await
+            .unwrap();
+        assert!(out.contains("\"*\""), "{out}");
         let out = OperatorCommand::AddKey { publisher: acme.clone(), public_key: dir.path().join("acme.pub"), admin: admin(&server) }
             .run()
             .await

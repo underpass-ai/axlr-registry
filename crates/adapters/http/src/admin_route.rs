@@ -16,6 +16,8 @@ pub enum AdminRoute {
     SuspendPublisher(PublisherId),
     /// `/v1/publishers/{id}/rate`.
     SetRate(PublisherId),
+    /// `/v1/publishers/{id}/namespaces`: the operator replaces them.
+    SetNamespaces(PublisherId),
     /// `/v1/publishers/{id}/keys`: the operator adds a key.
     AddKey(PublisherId),
     /// `/v1/publishers/{id}/keys/{key_id}/revoke`.
@@ -48,7 +50,7 @@ impl AdminRoute {
                 ["v1", "versions", name, version] => Self::ShowVersion(ToolName::parse(name)?, Version::parse(version)?),
                 ["v1", "index", "staging"] => Self::StagingIndex,
                 ["v1", "publishers"]
-                | ["v1", "publishers", _, "approve" | "suspend" | "rate" | "keys"]
+                | ["v1", "publishers", _, "approve" | "suspend" | "rate" | "namespaces" | "keys"]
                 | ["v1", "publishers", _, "keys", _, "revoke"]
                 | ["v1", "index", "publish" | "signature"] => return Err(HttpError::MethodNotAllowed),
                 ["v1", "versions", _, _, "approve" | "reject" | "yank"] => return Err(HttpError::MethodNotAllowed),
@@ -61,6 +63,7 @@ impl AdminRoute {
             ["v1", "publishers", id, "approve"] => Self::ApprovePublisher(PublisherId::parse(id)?),
             ["v1", "publishers", id, "suspend"] => Self::SuspendPublisher(PublisherId::parse(id)?),
             ["v1", "publishers", id, "rate"] => Self::SetRate(PublisherId::parse(id)?),
+            ["v1", "publishers", id, "namespaces"] => Self::SetNamespaces(PublisherId::parse(id)?),
             ["v1", "publishers", id, "keys"] => Self::AddKey(PublisherId::parse(id)?),
             ["v1", "publishers", id, "keys", key, "revoke"] => Self::RevokeKey(PublisherId::parse(id)?, KeyId::parse(key)?),
             ["v1", "versions", name, version, action @ ("approve" | "reject" | "yank")] => {
@@ -111,6 +114,8 @@ mod tests {
         assert!(matches!(post("/v1/publishers/acme/suspend").unwrap(), AdminRoute::SuspendPublisher(_)));
         assert!(matches!(post("/v1/publishers/acme/rate").unwrap(), AdminRoute::SetRate(_)));
         assert!(matches!(post("/v1/publishers/acme/keys").unwrap(), AdminRoute::AddKey(_)));
+        assert!(matches!(post("/v1/publishers/acme/namespaces").unwrap(), AdminRoute::SetNamespaces(_)));
+        assert!(matches!(get("/v1/publishers/acme/namespaces", None), Err(HttpError::MethodNotAllowed)));
         assert!(matches!(get("/v1/publishers/acme/keys", None), Err(HttpError::MethodNotAllowed)));
         assert!(matches!(post("/v1/publishers/acme/tokens"), Err(HttpError::NotFound)));
         assert!(matches!(get("/v1/publishers/acme/approve", None), Err(HttpError::MethodNotAllowed)));

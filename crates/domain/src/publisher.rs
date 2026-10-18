@@ -44,6 +44,7 @@ impl Publisher {
     }
 
     /// A publisher enrols itself: pending until an operator approves it.
+    /// `*` is refused: only an operator grants every name.
     pub fn enroll(
         id: PublisherId,
         key: VerifyingKey,
@@ -51,6 +52,9 @@ impl Publisher {
         contact: Contact,
         now: Timestamp,
     ) -> Result<Self, DomainError> {
+        if namespaces.iter().any(Scope::is_every_name) {
+            return Err(DomainError::invalid("publisher", "the namespace * is granted only by an operator"));
+        }
         Self::new(id, PublisherStatus::Pending, key, namespaces, contact, now)
     }
 
@@ -138,6 +142,16 @@ impl Publisher {
             self.namespaces = narrowed;
         }
         self.status = PublisherStatus::Active;
+        Ok(())
+    }
+
+    /// An operator replaces the namespaces, `*` allowed; the status is
+    /// unchanged.
+    pub fn set_namespaces(&mut self, namespaces: Vec<Scope>) -> Result<(), DomainError> {
+        if namespaces.is_empty() {
+            return Err(DomainError::invalid("publisher", "at least one namespace"));
+        }
+        self.namespaces = namespaces;
         Ok(())
     }
 
@@ -253,6 +267,24 @@ pub(crate) mod tests {
         assert!(p.is_active());
         p.set_rate(RateOverrides { requests_per_minute: Some(RateLimit::parse(5).unwrap()), uploads_per_day: None });
         assert_eq!(p.rate().requests_per_minute().max(), 5);
+    }
+
+    #[test]
+    fn only_an_operator_grants_every_name() {
+        let every = Scope::parse("*").unwrap();
+        let enrolled =
+            Publisher::enroll(PublisherId::parse("gamma").unwrap(), signing_key(4).verifying_key(), vec![every.clone()], contact(), NOW);
+        assert!(enrolled.unwrap_err().to_string().contains("only by an operator"));
+        let registered =
+            Publisher::register(PublisherId::parse("gamma").unwrap(), signing_key(4).verifying_key(), vec![every.clone()], contact(), NOW)
+                .unwrap();
+        assert!(registered.may_publish(&ToolName::parse("anything").unwrap()).is_ok());
+        let (mut p, _) = acme();
+        assert!(p.set_namespaces(vec![]).is_err(), "no namespace left");
+        p.set_namespaces(vec![every.clone()]).unwrap();
+        assert_eq!(p.namespaces(), [every]);
+        assert!(p.may_publish(&ToolName::parse("other_count").unwrap()).is_ok());
+        assert!(p.is_active());
     }
 
     #[test]

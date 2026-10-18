@@ -16,7 +16,7 @@ Status: decided with Tirso on 17 Oct 2026; §6 implemented on 18 Oct 2026 (`docs
 {"id": "acme", "public_key": "<base64, 32 bytes>", "namespaces": ["acme_*"], "contact": "ops@acme.example"}
 ```
 
-- `202 {"id": "acme", "status": "pending"}`; `409` when the id is taken by an active publisher; `400` on an invalid id, key, or namespace.
+- `202 {"id": "acme", "status": "pending"}`; `409` when the id is taken by an active publisher; `400` on an invalid id, key, or namespace, and on the namespace `*` (every name), which only an operator grants (`POST /v1/publishers/{id}/namespaces` on the admin API, or registration).
 - A pending publisher may do nothing else. `POST /v1/publishers/{id}/approve` (admin, operator) activates it, optionally narrowing `namespaces`; `POST /v1/publishers/{id}/suspend` blocks it (uploads refused, catalog entries untouched). States: `pending → active ⇄ suspended`.
 - Re-enrolling an id that is pending replaces the pending request (same key or a new one); an active id cannot be re-enrolled, only given a new key by the operator (`add-key`) or by a signed `POST /v1/publishers/{id}/keys` from one of its active keys.
 

@@ -55,6 +55,7 @@ Refusals of a signed request: 401 `stale`, `unknown_key`, `bad_signature`, `repl
 | `POST /v1/publishers` | `{id, public_key, namespaces, contact}` | registers a publisher, active at once (operator) |
 | `POST /v1/publishers/{id}/approve` | `{namespaces?}` | activates a pending or suspended publisher, optionally keeping only some namespaces (operator) |
 | `POST /v1/publishers/{id}/suspend` | `{reason?}` | blocks a publisher; its catalog entries stay (operator) |
+| `POST /v1/publishers/{id}/namespaces` | `{namespaces}` | replaces its namespaces; `*` grants every name (operator) |
 | `POST /v1/publishers/{id}/rate` | `{requests_per_minute?, uploads_per_day?}` | overrides its rate limits (operator) |
 | `POST /v1/publishers/{id}/keys` | `{public_key}` | adds a key to the record, no signed request needed (operator) |
 | `POST /v1/publishers/{id}/keys/{key_id}/revoke` | `{mode: rotation \| compromise}` | revokes a key; compromise yanks what it signed; rebuilds the index (operator) |
@@ -81,6 +82,7 @@ Statuses: domain `Invalid` 400, `Unauthorized` 401, `Forbidden` 403, `NotFound` 
 | `operator register-publisher --id <id> --public-key <file.pub> --namespace <scope>… --contact <email>` | a publisher the operator vouches for, active at once |
 | `operator approve-publisher --id <id> [--namespace <scope>…]` | activates an enrolled (or suspended) publisher, optionally keeping only some namespaces |
 | `operator suspend-publisher --id <id> [--reason …]` | blocks a publisher |
+| `operator set-namespaces --id <id> --namespace <scope>…` | replaces its namespaces, widening or narrowing them; `--namespace '*'` grants every name |
 | `operator set-rate --publisher <id> [--requests-per-minute N] [--uploads-per-day N]` | overrides its rate limits; an omitted flag restores the default |
 | `operator add-key --publisher <id> --public-key <file.pub>` | adds a key to a publisher's record without a signed request (its only key is lost) |
 | `operator revoke-key --publisher <id> --key-id <16 hex> --mode rotation\|compromise` | revokes a key; compromise yanks what it signed |

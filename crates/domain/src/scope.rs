@@ -1,4 +1,5 @@
-//! A tool name a token may publish: an exact name or a prefix ending in `*`.
+//! A tool name a publisher may publish: an exact name, a prefix ending in
+//! `*`, or `*` alone (every name), which only an operator grants.
 
 use crate::{DomainError, ToolName};
 
@@ -8,8 +9,15 @@ use crate::{DomainError, ToolName};
 pub struct Scope(String);
 
 impl Scope {
-    /// Validates a scope: a tool name, or a tool-name prefix followed by `*`.
+    /// Every tool name; granted only by an operator.
+    pub const EVERY_NAME: &'static str = "*";
+
+    /// Validates a scope: a tool name, a tool-name prefix followed by `*`,
+    /// or `*` alone.
     pub fn parse(raw: &str) -> Result<Self, DomainError> {
+        if raw == Self::EVERY_NAME {
+            return Ok(Self(raw.to_owned()));
+        }
         let body = raw.strip_suffix('*').unwrap_or(raw);
         let ok = !body.is_empty()
             && body.len() <= 48
@@ -18,8 +26,13 @@ impl Scope {
         if ok {
             Ok(Self(raw.to_owned()))
         } else {
-            Err(DomainError::invalid("scope", "a tool name or a prefix ending in *"))
+            Err(DomainError::invalid("scope", "a tool name, a prefix ending in *, or *"))
         }
+    }
+
+    /// Whether the scope is `*`, every tool name.
+    pub fn is_every_name(&self) -> bool {
+        self.0 == Self::EVERY_NAME
     }
 
     /// Whether the scope allows `name`.
@@ -68,5 +81,20 @@ mod tests {
         assert!(ns.contains(&Scope::parse("acme_c*").unwrap()));
         assert!(!Scope::parse("acme_count").unwrap().contains(&ns));
         assert!(Scope::parse("Bad").is_err());
+    }
+
+    #[test]
+    fn star_alone_covers_and_contains_everything() {
+        let every = Scope::parse("*").unwrap();
+        assert!(every.is_every_name());
+        assert!(!Scope::parse("acme_*").unwrap().is_every_name());
+        assert!(every.covers(&ToolName::parse("seat_allocation").unwrap()));
+        assert!(every.contains(&Scope::parse("acme_*").unwrap()));
+        assert!(every.contains(&Scope::parse("acme_count").unwrap()));
+        assert!(!Scope::parse("acme_*").unwrap().contains(&every));
+        assert!(!Scope::parse("acme").unwrap().contains(&every));
+        assert!(Scope::parse("**").is_err());
+        assert!(Scope::parse("").is_err());
+        assert_eq!(String::from(every), "*");
     }
 }

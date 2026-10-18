@@ -7,7 +7,7 @@ use lambda_http::{Body, Request, Response};
 use registry_application::ports::{AuditLog, Clock, IndexTrigger, IndexWriter, PrincipalRepository, PublisherRepository, ToolRepository};
 use registry_application::use_cases::{
     AddPublisherKeyAsOperator, ApprovePublisher, ApproveVersion, AuthenticatePrincipal, ListVersions, PublishSignedIndex, ReadStagingIndex,
-    RegisterPublisher, RejectVersion, RevokeKey, SetPublisherRate, ShowVersion, SuspendPublisher, YankVersion,
+    RegisterPublisher, RejectVersion, RevokeKey, SetPublisherNamespaces, SetPublisherRate, ShowVersion, SuspendPublisher, YankVersion,
 };
 use registry_application::{ApplicationError, Principal};
 use registry_domain::{PublisherId, PublisherStatus, RegistryPublicKey, Status, ToolName, Version};
@@ -15,7 +15,7 @@ use registry_domain::{PublisherId, PublisherStatus, RegistryPublicKey, Status, T
 use crate::{
     AddKeyRequest, AddKeyResponse, AdminRoute, ApprovePublisherRequest, ClientCertificate, ClientGate, HttpError, IndexSignatureRequest,
     JsonBody, JsonResponse, PublisherResponse, RateResponse, RegisterPublisherRequest, ReviewRequest, ReviewResponse, RevokeKeyRequest,
-    RevokeKeyResponse, SetRateRequest, VersionStatusResponse,
+    RevokeKeyResponse, SetNamespacesRequest, SetRateRequest, VersionStatusResponse,
 };
 
 /// The admin API over its ports.
@@ -89,6 +89,13 @@ where
                     .execute(&principal, &id, rate)
                     .await?;
                 Ok(JsonResponse::json(StatusCode::OK, &RateResponse::of(id.as_str(), &in_force)))
+            }
+            AdminRoute::SetNamespaces(id) => {
+                let namespaces = JsonBody::parse::<SetNamespacesRequest>(&request)?.into_namespaces()?;
+                let (status, in_force) = SetPublisherNamespaces { publishers: self.publishers, audit: self.audit, clock: self.clock }
+                    .execute(&principal, &id, namespaces)
+                    .await?;
+                Ok(JsonResponse::json(StatusCode::OK, &Self::publisher(&id, status, in_force)))
             }
             AdminRoute::AddKey(id) => {
                 let key = JsonBody::parse::<AddKeyRequest>(&request)?.into_key()?;
@@ -405,6 +412,20 @@ mod tests {
         let zero = api.handle(post(Some(OPS), "/v1/publishers/beta/rate", serde_json::json!({ "uploads_per_day": 0 }))).await;
         assert_eq!(zero.status(), StatusCode::BAD_REQUEST);
         let reviewer = api.handle(post(Some(ANA), "/v1/publishers/beta/rate", serde_json::json!({}))).await;
+        assert_eq!(reviewer.status(), StatusCode::FORBIDDEN);
+
+        let every = api.handle(post(Some(OPS), "/v1/publishers/beta/namespaces", serde_json::json!({ "namespaces": ["*"] }))).await;
+        assert_eq!(every.status(), StatusCode::OK, "{:?}", every.body());
+        let body: PublisherResponse = serde_json::from_slice(every.body().as_ref()).unwrap();
+        assert_eq!((body.status, body.namespaces.as_slice()), (PublisherStatus::Suspended, &["*".to_owned()][..]));
+        assert!(w.publishers.find(&beta).await.unwrap().unwrap().owns(&ToolName::parse("anything").unwrap()));
+        let none = api.handle(post(Some(OPS), "/v1/publishers/beta/namespaces", serde_json::json!({ "namespaces": [] }))).await;
+        assert_eq!(none.status(), StatusCode::BAD_REQUEST);
+        let bad = api.handle(post(Some(OPS), "/v1/publishers/beta/namespaces", serde_json::json!({ "namespaces": ["Bad"] }))).await;
+        assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+        let ghost = api.handle(post(Some(OPS), "/v1/publishers/ghost/namespaces", serde_json::json!({ "namespaces": ["*"] }))).await;
+        assert_eq!(ghost.status(), StatusCode::NOT_FOUND);
+        let reviewer = api.handle(post(Some(ANA), "/v1/publishers/beta/namespaces", serde_json::json!({ "namespaces": ["*"] }))).await;
         assert_eq!(reviewer.status(), StatusCode::FORBIDDEN);
     }
 
