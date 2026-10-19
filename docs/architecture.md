@@ -1,6 +1,6 @@
 # Architecture: a serverless Rust registry that costs almost nothing to run
 
-Status: decided on 17 Oct 2026 with Tirso; nothing deployed yet. The domain is in [`domain.md`](domain.md). This document is the service around it: hosting, data, security, code layout, tests and delivery.
+Status: decided on 17 Oct 2026 with Tirso; deployed to staging and production on 18 Oct 2026 (release v0.3.5, eu-south-2). The domain is in [`domain.md`](domain.md). This document is the service around it: hosting, data, security, code layout, tests and delivery.
 
 ## Constraints that shape everything
 

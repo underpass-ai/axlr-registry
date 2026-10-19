@@ -1,6 +1,6 @@
 # Operations: the private CA, client certificates, the truststore, the CloudFront certificate, and publishers
 
-Status: written 17 Oct 2026, before any deployment. These are the steps the operator runs once per environment, before the first `sam deploy`, and again when something rotates. The architecture that needs them is in [`architecture.md`](architecture.md) (bootstrap order, security). The local parts are scripted in [`scripts/ca.sh`](../scripts/ca.sh); the AWS parts are plain `aws` commands, listed here and never run by the script. Nothing below has been run against an AWS account yet.
+Status: written 17 Oct 2026, before the first deployment; staging and production have run since 17 and 18 Oct 2026. These are the steps the operator runs once per environment, before the first `sam deploy`, and again when something rotates. The architecture that needs them is in [`architecture.md`](architecture.md) (bootstrap order, security). The local parts are scripted in [`scripts/ca.sh`](../scripts/ca.sh); the AWS parts are plain `aws` commands, listed here and never run by the script.
 
 Placeholders: `DOMAIN` is the registered domain, `REGION` the deployment region, `TRUSTSTORE_BUCKET` the name of the tiny versioned bucket, `STACK` the stack name (`axlr-registry-staging` or `axlr-registry-production`).
 
