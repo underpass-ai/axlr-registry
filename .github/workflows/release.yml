@@ -32,7 +32,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-lambda
-      - run: cargo lambda build --release --arm64 --workspace
+      - run: cargo lambda build --release --arm64 --workspace --exclude registry-local
       - name: Checksums
         run: |
           mkdir -p dist

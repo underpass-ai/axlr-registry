@@ -1,6 +1,6 @@
 //! The catalog metadata of a manifest.
 
-use crate::{Requires, Version};
+use crate::{DomainError, Requires, Version};
 
 /// `manifest.json`'s `catalog` block.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -27,4 +27,14 @@ pub struct CatalogBlock {
     /// Where the method comes from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+}
+
+impl CatalogBlock {
+    /// The fields every entry needs, a tool's or a skill's.
+    pub(crate) fn check_required(&self) -> Result<(), DomainError> {
+        if self.category.is_empty() || self.license.is_empty() {
+            return Err(DomainError::invalid("manifest", "catalog.category and catalog.license are required"));
+        }
+        Ok(())
+    }
 }

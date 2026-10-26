@@ -35,7 +35,7 @@ jobs:
       - name: Offline coverage gate (80 % of lines; Lambda entry points and the SDK-calling adapters excluded, the integration job covers those)
         run: >
           cargo llvm-cov --workspace --all-features
-          --ignore-filename-regex 'crates/lambdas/.*/src/main\.rs|crates/adapters/(dynamodb|s3|lambda)/src/(dynamo_|s3_|lambda_|table|bucket).*\.rs'
+          --ignore-filename-regex 'crates/lambdas/.*/src/main\.rs|crates/adapters/(dynamodb|s3|lambda)/src/(dynamo_|s3_|lambda_|table|bucket).*\.rs|crates/local/src/main\.rs'
           --fail-under-lines 80 --summary-only
 
   integration:
@@ -72,7 +72,7 @@ jobs:
           AWS_REGION: eu-west-1
         run: >
           cargo llvm-cov --workspace --all-features --exclude registry-e2e
-          --ignore-filename-regex 'crates/lambdas/.*/src/main\.rs'
+          --ignore-filename-regex 'crates/lambdas/.*/src/main\.rs|crates/local/src/main\.rs'
           --fail-under-lines 80 --summary-only
           -- --include-ignored
         # registry-e2e's ignored test needs a deployed stack; the release job runs it.
@@ -101,7 +101,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-lambda
-      - run: cargo lambda build --release --arm64 --workspace
+      - run: cargo lambda build --release --arm64 --workspace --exclude registry-local
       - uses: actions/upload-artifact@v4
         with:
           name: lambdas-${{ github.sha }}

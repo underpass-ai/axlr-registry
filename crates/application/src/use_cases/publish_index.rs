@@ -5,8 +5,9 @@ use registry_domain::{Index, Status};
 use crate::ports::{ArtifactStore, AuditLog, Clock, IndexWriter, PublisherRepository, ToolRepository};
 use crate::{ApplicationError, AuditEntry};
 
-/// Copies every approved version to the published prefix and writes the
-/// canonical index to staging, for the operator to sign offline.
+/// Copies every approved version, tool or skill, to the published prefix
+/// of its kind and writes the canonical index to staging, for the operator
+/// to sign offline.
 pub struct PublishIndex<'a, P, T, A, W, L, C> {
     /// The catalog name.
     pub catalog: &'a str,
@@ -40,7 +41,7 @@ where
         let publishers = self.publishers.all().await?;
         for tool in &tools {
             for version in tool.versions().iter().filter(|v| v.status() == Status::Approved) {
-                self.artifacts.publish(version.name(), version.version()).await?;
+                self.artifacts.publish(version.kind(), version.name(), version.version()).await?;
             }
         }
         let index = Index::build(self.catalog, &tools, &publishers, now);
@@ -51,7 +52,12 @@ where
                 actor: "registry".into(),
                 action: "publish_index",
                 subject: self.catalog.to_owned(),
-                detail: format!("{} tool(s), {} revocation(s)", index.tools.len(), index.revocations.len()),
+                detail: format!(
+                    "{} tool(s), {} skill(s), {} revocation(s)",
+                    index.tools.len(),
+                    index.skills.len(),
+                    index.revocations.len()
+                ),
             })
             .await?;
         Ok(index)

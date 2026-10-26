@@ -137,15 +137,15 @@ async fn a_bundle_goes_from_upload_to_the_index() {
     assert_eq!(index.tools.len(), 1);
     assert_eq!(index.tools[0].reviewer, "ana");
     assert_eq!(w.index.staged().unwrap(), index.canonical());
-    let manifest = w.artifacts.published("acme_count/1.0.0/manifest.json").unwrap();
+    let manifest = w.artifacts.published("tools/acme_count/1.0.0/manifest.json").unwrap();
     assert_eq!(
         registry_domain::Digest::of(&manifest).to_string(),
         index.tools[0].manifest_sha256,
         "the published manifest is the one the index names"
     );
-    let file = w.artifacts.published("acme_count/1.0.0/count.py").unwrap();
+    let file = w.artifacts.published("tools/acme_count/1.0.0/count.py").unwrap();
     assert_eq!(registry_domain::Digest::of(&file).to_string(), index.tools[0].files["count.py"]);
-    assert!(w.artifacts.published("acme_count/1.0.0/tests.json").is_none(), "tests.json was published");
+    assert!(w.artifacts.published("tools/acme_count/1.0.0/tests.json").is_none(), "tests.json was published");
     let actions: Vec<&str> = w.audit.entries().iter().map(|e| e.action).collect();
     assert_eq!(actions, ["register_publisher", "submit", "tests", "approve", "publish_index"]);
 

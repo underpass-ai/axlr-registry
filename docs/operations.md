@@ -167,6 +167,34 @@ Afterwards: `suspend-publisher --id acme --reason …` blocks a publisher (uploa
 
 Re-bootstrapping a stack that ran with tokens: the publisher META items lack `status`, `contact` and the rate attributes, and no key has its `KEYID#` pointer, so the old records do not load. Delete each publisher's items (the `PUB#<id>` partition and the `TOKEN#` pointers) and register the publishers again with `register-publisher`; the e2e publisher keeps its key file. Used nonces and rate windows live in `NONCE#` and `RATE#` items that the table's TTL on `expires_at` removes.
 
+## Local harness: the registry without AWS
+
+`axlr-registry-local` (`crates/local`) runs the registry from memory on the loopback, so the AXLR console can publish, install and update tools and skills end to end on one machine. It is a development harness: plain HTTP, nothing persisted, a review route without credentials. It refuses a `--listen` address off the loopback.
+
+```bash
+cargo run -p registry-local -- --listen 127.0.0.1:8787 --catalog local \
+  --publisher-id acme --publisher-key "$(awk 'END {print $2}' acme.key.pub)" --namespaces '*' \
+  --key-dir ~/.axlr-registry-local
+```
+
+On one port it serves:
+
+- the publish API as deployed (`POST /v1/versions`, `GET /v1/versions/{name}/{version}`, `POST /v1/publishers/enroll`, `POST /v1/publishers/{id}/keys`), with the same User-Agent gate and signed-request checks; the publisher given by `--publisher-id` and `--publisher-key` (base64 of the 32-byte Ed25519 key, as `axlr-registry publisher identity --key acme.key` prints it) is registered active with `--namespaces` (comma-separated, `*` by default) and rate limits of 1,000 requests per minute and uploads per day;
+- the published catalog as static files to AXLR clients: `GET /index.json`, `/index.json.minisig`, `/tools/<name>/<version>/<file>` and `/skills/<name>/<version>/<file>`; anything else is a 404;
+- `POST /local/approve/{name}/{version}` (body `{"reason": …}`, optional) and `POST /local/yank/{name}/{version}` (body `{"reason": …}`, required), which act as the reviewer `local-reviewer` and publish a new index.
+
+An upload is processed before it is answered: after a clean scan the version's tests run inline (a skill's checks in process; a tool's `tests.json` under bubblewrap with every namespace unshared, or, when `bwrap` cannot run here, a failed report that says so), and with `--auto-approve` (the default; `--auto-approve=false` to review by hand) a version that passed is approved as `local-reviewer`, the index is rebuilt, signed and published. The publisher's `status` is therefore final when the upload returns.
+
+The index is signed with a minisign key kept in `--key-dir` (default `.axlr-registry-local`): `registry.key` is created on the first start without a password (mode 0600) and reused afterwards, and `registry.pub` is written beside it. The signature is minisign's prehashed form with the trusted comment `timestamp:<t>\tfile:index.json\tprehashed`, the form `operator sign-index` writes and the console's `minisign.go` verifies. On start the harness publishes an empty signed index and prints, among other lines:
+
+```text
+axlr-registry-local serving catalog local at http://127.0.0.1:8787
+base_url    http://127.0.0.1:8787
+public_key  RW…
+```
+
+A console catalog entry with that `base_url` and `public_key` installs from the harness, and the console publishes to the same URL. `curl` needs `-A axlr-dev` to read the catalog.
+
 ## Follow-ups
 
 - A `register-principal` command over the admin API would replace the `put-item` in step 3 once the first operator exists; today `PrincipalRepository` is read-only.

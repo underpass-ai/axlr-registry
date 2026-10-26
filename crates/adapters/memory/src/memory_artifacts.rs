@@ -5,10 +5,11 @@ use std::sync::Mutex;
 
 use registry_application::ports::ArtifactStore;
 use registry_application::ApplicationError;
-use registry_domain::{FileName, Status, ToolName, ValidBundle, Version};
+use registry_domain::{FileName, Kind, Status, ToolName, ValidBundle, Version};
 
 /// An in-memory artifact store; quarantine keys are
-/// `status/name/version/file`, published keys `name/version/file`.
+/// `status/name/version/file`, published keys `tools/name/version/file` or
+/// `skills/name/version/file`, the paths the catalog serves.
 #[derive(Default)]
 pub struct MemoryArtifacts {
     quarantine: Mutex<BTreeMap<String, Vec<u8>>>,
@@ -23,7 +24,7 @@ impl MemoryArtifacts {
         }
     }
 
-    /// A published object.
+    /// A published object, by its catalog path (`tools/<name>/<version>/<file>`).
     pub fn published(&self, key: &str) -> Option<Vec<u8>> {
         self.published.lock().expect("lock").get(key).cloned()
     }
@@ -67,12 +68,12 @@ impl ArtifactStore for MemoryArtifacts {
             .collect()
     }
 
-    async fn publish(&self, name: &ToolName, version: &Version) -> Result<(), ApplicationError> {
+    async fn publish(&self, kind: Kind, name: &ToolName, version: &Version) -> Result<(), ApplicationError> {
         let prefix = format!("scanned/{}/{version}/", name.as_str());
         let quarantine = self.quarantine.lock().expect("lock");
         let mut published = self.published.lock().expect("lock");
         for (key, content) in quarantine.iter().filter(|(k, _)| k.starts_with(&prefix) && !k.ends_with("/tests.json")) {
-            published.insert(key.trim_start_matches("scanned/").to_owned(), content.clone());
+            published.insert(format!("{}/{}", kind.directory(), key.trim_start_matches("scanned/")), content.clone());
         }
         Ok(())
     }

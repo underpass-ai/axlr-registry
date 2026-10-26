@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use registry_domain::{FileName, Status, ToolName, ValidBundle, Version};
+use registry_domain::{FileName, Kind, Status, ToolName, ValidBundle, Version};
 
 use crate::ApplicationError;
 
@@ -32,6 +32,12 @@ pub trait ArtifactStore: Send + Sync {
         version: &Version,
     ) -> impl std::future::Future<Output = Result<BTreeMap<FileName, Vec<u8>>, ApplicationError>> + Send;
     /// Copies a version's manifest and files (not `tests.json`) from the
-    /// `scanned` quarantine prefix to the published prefix.
-    fn publish(&self, name: &ToolName, version: &Version) -> impl std::future::Future<Output = Result<(), ApplicationError>> + Send;
+    /// `scanned` quarantine prefix to the published prefix of its kind:
+    /// `tools/<name>/<version>/` or `skills/<name>/<version>/`.
+    fn publish(
+        &self,
+        kind: Kind,
+        name: &ToolName,
+        version: &Version,
+    ) -> impl std::future::Future<Output = Result<(), ApplicationError>> + Send;
 }

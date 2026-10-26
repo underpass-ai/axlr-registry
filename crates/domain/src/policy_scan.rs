@@ -1,16 +1,26 @@
 //! The policy scan: a pure function of a validated bundle.
 
 use crate::scan_rule::ScanRule;
-use crate::{Finding, ScanReport, Severity, ValidBundle};
+use crate::{Finding, Manifest, ScanReport, Severity, ToolManifest, ValidBundle};
 
 /// Runs the policy rules over every file of a bundle. The same bundle always
-/// yields the same report, so a reviewer can reproduce it.
+/// yields the same report, so a reviewer can reproduce it. A tool gets the
+/// rules of its program's family; a skill, which runs nothing, gets the
+/// obfuscation rules only.
 pub struct PolicyScan;
 
 impl PolicyScan {
     /// Scans a bundle.
     pub fn run(bundle: &ValidBundle) -> ScanReport {
-        let program = &bundle.manifest().program;
+        match bundle.manifest() {
+            Manifest::Tool(tool) => Self::tool(bundle, tool),
+            Manifest::Skill(_) => Self::skill(bundle),
+        }
+    }
+
+    /// A tool's files, by its program; comment lines are skipped.
+    fn tool(bundle: &ValidBundle, manifest: &ToolManifest) -> ScanReport {
+        let program = &manifest.program;
         let rules = ScanRule::for_program(program);
         let comment = if program.to_ascii_lowercase().starts_with("node") { "//" } else { "#" };
         let mut findings = Vec::new();
@@ -24,13 +34,34 @@ impl PolicyScan {
                     if !rule.pattern.is_match(line) {
                         continue;
                     }
-                    let severity = if rule.network && bundle.manifest().catalog.network { Severity::Warn } else { rule.severity };
+                    let severity = if rule.network && manifest.catalog.network { Severity::Warn } else { rule.severity };
                     findings.push(Finding {
                         rule: rule.name.to_owned(),
                         file: name.clone(),
                         line: i + 1,
                         severity,
                         detail: trimmed.chars().take(120).collect(),
+                    });
+                }
+            }
+        }
+        ScanReport { findings }
+    }
+
+    /// A skill's files: every line, headings included (`#` opens a
+    /// Markdown heading, not a comment), against the obfuscation rules.
+    fn skill(bundle: &ValidBundle) -> ScanReport {
+        let rules = ScanRule::obfuscation();
+        let mut findings = Vec::new();
+        for (name, content) in bundle.files() {
+            for (i, line) in String::from_utf8_lossy(content).lines().enumerate() {
+                for rule in rules.iter().filter(|r| r.pattern.is_match(line)) {
+                    findings.push(Finding {
+                        rule: rule.name.to_owned(),
+                        file: name.clone(),
+                        line: i + 1,
+                        severity: rule.severity,
+                        detail: line.trim().chars().take(120).collect(),
                     });
                 }
             }
@@ -114,5 +145,35 @@ mod tests {
         assert!(clean.findings.is_empty(), "{:?}", clean.findings);
         assert!(!clean.is_blocking());
         assert!(clean.warnings().is_empty());
+    }
+
+    fn skill(file: &str, text: &str) -> ValidBundle {
+        let manifest = serde_json::to_vec(&serde_json::json!({
+            "kind": "skill", "name": "acme_triage", "description": "d", "files": ["SKILL.md", file],
+            "catalog": {"version": "1.0.0", "category": "c", "license": "MIT"}
+        }))
+        .unwrap();
+        let files: BTreeMap<FileName, Vec<u8>> = [
+            (FileName::parse("SKILL.md").unwrap(), b"# Triage\nRead the logs first.\n".to_vec()),
+            (FileName::parse(file).unwrap(), text.as_bytes().to_vec()),
+        ]
+        .into();
+        Bundle::new(manifest, files).validate().unwrap()
+    }
+
+    #[test]
+    fn a_skill_gets_the_obfuscation_rules_only() {
+        let prose = "Run `curl https://status.example` and `import socket`; read /etc/hosts and ../notes.\neval(x) is fine to mention.\n";
+        let report = PolicyScan::run(&skill("notes.md", prose));
+        assert!(report.findings.is_empty(), "program rules ran over a skill: {:?}", report.findings);
+        let blob = format!("# {}\n", "QUJD".repeat(60));
+        let report = PolicyScan::run(&skill("notes.md", &blob));
+        assert!(report.is_blocking(), "a blob on a heading line was skipped as a comment");
+        assert_eq!(
+            (report.findings[0].rule.as_str(), report.findings[0].file.as_str(), report.findings[0].line),
+            ("obfuscation", "notes.md", 1)
+        );
+        let escapes = format!("payload: {}\n", "\\x41".repeat(30));
+        assert!(PolicyScan::run(&skill("notes.md", &escapes)).is_blocking());
     }
 }

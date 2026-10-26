@@ -1,9 +1,9 @@
-//! One immutable submission of a tool.
+//! One immutable submission of a tool or a skill.
 
 use std::collections::BTreeMap;
 
 use crate::{
-    Digest, DomainError, FileName, Manifest, Publisher, PublisherId, PublisherSignature, Review, ReviewerId, ScanReport, Status,
+    Digest, DomainError, FileName, Kind, Manifest, Publisher, PublisherId, PublisherSignature, Review, ReviewerId, ScanReport, Status,
     TestReport, Timestamp, ToolName, ToolVersionRecord, ValidBundle, Version, Yank,
 };
 
@@ -197,6 +197,10 @@ impl ToolVersion {
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
     }
+    /// The kind, from the manifest.
+    pub fn kind(&self) -> Kind {
+        self.manifest.kind()
+    }
     /// The manifest digest.
     pub fn manifest_digest(&self) -> &Digest {
         &self.manifest_digest
@@ -272,6 +276,21 @@ pub(crate) mod tests {
 
     pub(crate) fn passing() -> TestReport {
         TestReport::new(3, 3, vec![], NOW)
+    }
+
+    /// A scanned skill `name` at `version` whose `SKILL.md` is `skill_md`.
+    pub(crate) fn submitted_skill(name: &str, version: &str, skill_md: &str) -> (ToolVersion, Publisher) {
+        let (p, key) = acme();
+        let manifest = serde_json::to_vec(&serde_json::json!({
+            "kind": "skill", "name": name, "description": "Triage an incident. From its logs.", "files": ["SKILL.md"],
+            "tools": ["local_read"], "catalog": {"version": version, "category": "programming", "tags": ["sre"], "license": "MIT"}
+        }))
+        .unwrap();
+        let files: BTreeMap<FileName, Vec<u8>> = [(FileName::parse("SKILL.md").unwrap(), skill_md.as_bytes().to_vec())].into();
+        let bundle = Bundle::new(manifest, files).validate().unwrap();
+        let mut v = ToolVersion::submit(&bundle, &p, PublisherSignature::sign(&key, bundle.bundle_digest()), NOW).unwrap();
+        v.record_scan(PolicyScan::run(&bundle), NOW).unwrap();
+        (v, p)
     }
 
     fn ana() -> ReviewerId {

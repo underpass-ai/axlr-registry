@@ -1,7 +1,8 @@
 //! `index-publisher`: invoked asynchronously by `admin-api` after an
 //! approval, a yank or a key revocation (and by `POST /v1/index/publish`),
-//! it copies every approved version to `published/` and writes the unsigned
-//! canonical index to `staging/index.json` for the operator to sign.
+//! it copies every approved version, tool or skill, to `published/` and
+//! writes the unsigned canonical index to `staging/index.json` for the
+//! operator to sign.
 //! Configuration: `TABLE_NAME`, `ARTIFACTS_BUCKET`, `CATALOG_NAME`.
 
 use aws_config::BehaviorVersion;
@@ -41,6 +42,7 @@ async fn handle(wiring: &Wiring, _event: LambdaEvent<Value>) -> Result<Value, Er
         "catalog": built.catalog,
         "generated_at": built.generated_at,
         "tools": built.tools.len(),
+        "skills": built.skills.len(),
         "revocations": built.revocations.len(),
         "revoked_keys": built.revoked_keys.len(),
     }))

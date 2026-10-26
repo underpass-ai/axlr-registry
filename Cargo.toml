@@ -11,6 +11,7 @@ members = [
     "crates/runner",
     "crates/cli",
     "crates/e2e",
+    "crates/local",
     "crates/lambdas/publish-api",
     "crates/lambdas/admin-api",
     "crates/lambdas/test-runner",
@@ -33,6 +34,7 @@ registry-s3 = { path = "crates/adapters/s3" }
 registry-lambda = { path = "crates/adapters/lambda" }
 registry-http = { path = "crates/adapters/http" }
 registry-runner = { path = "crates/runner" }
+axlr-registry-cli = { path = "crates/cli" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -54,6 +56,9 @@ aws-sdk-lambda = { version = "1", default-features = false, features = ["rt-toki
 lambda_http = { version = "1", default-features = false, features = ["apigw_http", "tracing"] }
 ulid = "1"
 blake2 = "0.11"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "query"] }
 clap = { version = "4", features = ["derive", "env"] }
 wiremock = "0.6"

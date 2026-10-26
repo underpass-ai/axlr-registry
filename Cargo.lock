@@ -2384,6 +2384,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "registry-local"
+version = "0.1.0"
+dependencies = [
+ "axlr-registry-cli",
+ "base64 0.22.1",
+ "clap",
+ "ed25519-dalek",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "lambda_http",
+ "rand 0.8.8",
+ "registry-application",
+ "registry-domain",
+ "registry-http",
+ "registry-memory",
+ "registry-runner",
+ "reqwest",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "time",
+ "tokio",
+]
+
+[[package]]
 name = "registry-memory"
 version = "0.1.0"
 dependencies = [

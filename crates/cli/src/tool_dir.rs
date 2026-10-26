@@ -25,7 +25,7 @@ impl ToolDir {
         let manifest = read_file(&dir.join("manifest.json"))?;
         let parsed = Manifest::parse(&manifest)?;
         let mut files = BTreeMap::new();
-        for name in &parsed.files {
+        for name in parsed.files() {
             files.insert(name.clone(), read_file(&dir.join(name.as_str()))?);
         }
         let tests_path = dir.join("tests.json");

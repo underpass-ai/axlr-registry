@@ -47,7 +47,7 @@ Body (`application/json`); contents are base64 so the bytes the digests cover tr
 }
 ```
 
-`files` holds exactly the names the manifest lists. `tests` is optional and is not part of the signed bundle; without it the version is accepted, gets a failed test report and cannot be approved. The server runs `SubmitVersion` (the name inside the publisher's namespaces, bundle validation, the bundle signature with an active key, policy scan, quarantine, test scheduling) and answers `201`:
+`files` holds exactly the names the manifest lists. The manifest is a tool's or, with `"kind": "skill"`, a skill's ([`domain.md`](domain.md), "Skills"). `tests` is optional and is not part of the signed bundle; without it a tool is accepted, gets a failed test report and cannot be approved. A skill's `tests` holds model cases the registry checks for shape only, so a skill without it is approvable on its other checks. The server runs `SubmitVersion` (the name inside the publisher's namespaces, bundle validation, the bundle signature with an active key, policy scan, quarantine, test scheduling) and answers `201`:
 
 ```json
 { "name": "acme_count", "version": "1.0.0", "status": "scanned", "findings": [] }
@@ -57,7 +57,7 @@ Body (`application/json`); contents are base64 so the bytes the digests cover tr
 
 ### `GET /v1/versions/{name}/{version}`: the publisher's view
 
-`200` with `name`, `version`, `status`, `submitted_at`, `findings`, `tests_passed` (null until the runner reports), `failed_tests` and `rejected_reason`. The name must be inside the caller's namespaces (`401` otherwise).
+`200` with `name`, `version`, `kind` (`tool` or `skill`), `status`, `submitted_at`, `findings`, `tests_passed` (null until the runner reports), `failed_tests` and `rejected_reason`. The name must be inside the caller's namespaces (`401` otherwise).
 
 ## Admin API: `https://admin.DOMAIN`, client certificate
 
@@ -80,11 +80,15 @@ Mutual TLS with a certificate from the private CA (`operations.md`); API Gateway
 
 The signature the operator uploads is what `axlr-registry operator sign-index` writes: minisign's prehashed form (`ED`, BLAKE2b-512 of the index), the key id, the trusted comment and the global signature, the form the AXLR console's `minisign.go` verifies and `minisign -V` accepts.
 
-The three `GET` routes the CLI's `review list`, `review show` and `operator fetch-index` call are served too: `GET /v1/versions[?status=]` (the reviewer's queue, oldest first, `scanned` by default; `400` for another value), `GET /v1/versions/{name}/{version}` (the same report as the publisher's view; `404` when unknown) and `GET /v1/index/staging` (the unsigned canonical `index.json`; `404` before the first publish; operators only).
+The three `GET` routes the CLI's `review list`, `review show` and `operator fetch-index` call are served too: `GET /v1/versions[?status=]` (the reviewer's queue, oldest first, `scanned` by default; `400` for another value), `GET /v1/versions/{name}/{version}` (the same report as the publisher's view, `kind` included; `404` when unknown) and `GET /v1/index/staging` (the unsigned canonical `index.json`; `404` before the first publish; operators only).
 
 ### Not served yet
 
 Not verified against a deployed stack: that API Gateway hands the Lambda the query string exactly as sent (no publish route carries one today).
+
+## The published catalog: `https://registry.DOMAIN`, static
+
+What the console reads, from CloudFront over `published/`: `index.json`, `index.json.minisig`, and each approved version's manifest and files at the path its index entry names, `tools/<name>/<version>/<file>` for a tool and `skills/<name>/<version>/<file>` for a skill. Only AXLR clients get an answer (the User-Agent gate). The local harness (`operations.md`, "Local harness") serves the same paths.
 
 ## Who calls what
 

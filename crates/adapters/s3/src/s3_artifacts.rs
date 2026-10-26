@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use aws_sdk_s3::primitives::ByteStream;
 use registry_application::ports::ArtifactStore;
 use registry_application::ApplicationError;
-use registry_domain::{FileName, Status, ToolName, ValidBundle, Version};
+use registry_domain::{FileName, Kind, Status, ToolName, ValidBundle, Version};
 
 use crate::bucket::Bucket;
 use crate::object_key::ObjectKey;
@@ -102,9 +102,9 @@ impl ArtifactStore for S3Artifacts {
         Ok(files)
     }
 
-    async fn publish(&self, name: &ToolName, version: &Version) -> Result<(), ApplicationError> {
+    async fn publish(&self, kind: Kind, name: &ToolName, version: &Version) -> Result<(), ApplicationError> {
         let from = ObjectKey::quarantine_prefix(Status::Scanned, name, version);
-        let to = ObjectKey::published_prefix(name, version);
+        let to = ObjectKey::published_prefix(kind, name, version);
         let keys = self.list(&from).await?;
         if keys.is_empty() {
             return Err(ApplicationError::port("s3", format!("nothing quarantined under {from}")));

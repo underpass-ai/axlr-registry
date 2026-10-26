@@ -1,7 +1,8 @@
 //! The test-runner Lambda: `publish-api` invokes it asynchronously with
 //! `{"name": ..., "version": ...}` after a clean scan. It fetches the
-//! version from quarantine, runs its `tests.json` under `/tmp` with the
-//! `axlr_run_tool` contract and records the report (see `registry-runner`).
+//! version from quarantine, runs a tool's `tests.json` under `/tmp` with the
+//! `axlr_run_tool` contract, or checks a skill's files, and records the
+//! report (see `registry-runner`).
 //! This file only wires; the work and its tests are in the runner crate.
 
 use std::path::Path;
@@ -11,7 +12,7 @@ use aws_config::BehaviorVersion;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use registry_dynamodb::{DynamoAudit, DynamoTools, Table};
 use registry_lambda::{Environment, SystemClock, TestRunRequest};
-use registry_runner::{Limits, RunVersion, TestRun};
+use registry_runner::{Confinement, Limits, RunVersion, TestRun};
 use registry_s3::{Bucket, S3Artifacts};
 
 /// Where versions are unpacked; the only writable path in a Lambda.
@@ -53,7 +54,16 @@ async fn wire_and_run(request: &TestRunRequest, limits: Limits) -> Result<TestRu
     let artifacts = S3Artifacts::new(Bucket::new(aws_sdk_s3::Client::new(&config), Environment::required("ARTIFACTS_BUCKET")?));
     let tools = DynamoTools::new(table.clone());
     let audit = DynamoAudit::new(table);
-    let runner =
-        RunVersion { artifacts: &artifacts, tools: &tools, audit: &audit, clock: &SystemClock, workdir: Path::new(WORKDIR), limits };
+    // The function's subnet has no network path: the environment confines
+    // the tool. A skill runs nothing either way.
+    let runner = RunVersion {
+        artifacts: &artifacts,
+        tools: &tools,
+        audit: &audit,
+        clock: &SystemClock,
+        workdir: Path::new(WORKDIR),
+        limits,
+        confinement: Confinement::Environment,
+    };
     Ok(runner.execute(&request.name, &request.version).await?)
 }
