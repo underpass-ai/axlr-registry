@@ -18,13 +18,20 @@ impl ScanRule {
         Self { name, pattern: Regex::new(pattern).expect("a rule pattern compiles"), severity, network }
     }
 
-    /// Rules every program gets.
-    pub(crate) fn generic() -> Vec<Self> {
+    /// Long base64 or hex blobs and runs of `\x` escapes: the rules every
+    /// file gets, a skill's included.
+    pub(crate) fn obfuscation() -> Vec<Self> {
         vec![
             Self::new("obfuscation", r"[A-Za-z0-9+/=]{200,}", Severity::Block, false),
             Self::new("obfuscation", r"(\\x[0-9a-fA-F]{2}){24,}", Severity::Block, false),
-            Self::new("escape", r"(^|[^A-Za-z0-9_])(/home/|/etc/|/root/|/var/|\.\./)", Severity::Warn, false),
         ]
+    }
+
+    /// Rules every program gets.
+    pub(crate) fn generic() -> Vec<Self> {
+        let mut rules = Self::obfuscation();
+        rules.push(Self::new("escape", r"(^|[^A-Za-z0-9_])(/home/|/etc/|/root/|/var/|\.\./)", Severity::Warn, false));
+        rules
     }
 
     pub(crate) fn python() -> Vec<Self> {

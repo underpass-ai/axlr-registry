@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use base64::Engine as _;
 
-use crate::{Requires, ToolVersion};
+use crate::{Requires, ToolManifest, ToolVersion};
 
 /// The fields through `updated_at` are the ones the AXLR console's catalog
 /// client reads (it decodes leniently); the rest add provenance.
@@ -59,17 +59,17 @@ impl IndexEntry {
         format!("tools/{}/{}/manifest.json", version.name().as_str(), version.version())
     }
 
-    /// Builds the entry of an approved version.
-    pub(crate) fn of(version: &ToolVersion) -> Self {
+    /// Builds the entry of an approved tool version.
+    pub(crate) fn of(version: &ToolVersion, tool: &ToolManifest) -> Self {
         let review = version.review().expect("an approved version has a review");
-        let catalog = &version.manifest().catalog;
+        let catalog = &tool.catalog;
         Self {
             name: version.name().as_str().to_owned(),
             version: version.version().to_string(),
             category: catalog.category.clone(),
             tags: catalog.tags.clone(),
             summary: version.manifest().summary(),
-            program: version.manifest().program.clone(),
+            program: tool.program.clone(),
             requires: catalog.requires.clone(),
             network: catalog.network,
             license: catalog.license.clone(),

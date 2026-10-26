@@ -1,4 +1,6 @@
 //! The AXLR tool registry domain: pure, with no I/O. One type per file.
+//! A catalog entry is a tool or a skill (`Kind`); both share the bundle,
+//! the signatures, the lifecycle and the index.
 //! Invariants are documented in `docs/domain.md`.
 
 mod bundle;
@@ -13,6 +15,7 @@ mod index;
 mod index_entry;
 mod index_signature;
 mod key_id;
+mod kind;
 mod manifest;
 mod nonce;
 mod policy_scan;
@@ -35,10 +38,14 @@ mod scan_report;
 mod scan_rule;
 mod scope;
 mod severity;
+mod skill_index_entry;
+mod skill_manifest;
 mod status;
 mod test_report;
 mod tool;
+mod tool_manifest;
 mod tool_name;
+mod tool_reference;
 mod tool_version;
 mod tool_version_record;
 mod valid_bundle;
@@ -58,6 +65,7 @@ pub use index_entry::IndexEntry;
 pub use index_signature::test_support;
 pub use index_signature::IndexSignature;
 pub use key_id::KeyId;
+pub use kind::Kind;
 pub use manifest::Manifest;
 pub use nonce::Nonce;
 pub use policy_scan::PolicyScan;
@@ -79,10 +87,14 @@ pub use revoked_key::RevokedKey;
 pub use scan_report::ScanReport;
 pub use scope::Scope;
 pub use severity::Severity;
+pub use skill_index_entry::SkillIndexEntry;
+pub use skill_manifest::SkillManifest;
 pub use status::Status;
 pub use test_report::TestReport;
 pub use tool::Tool;
+pub use tool_manifest::ToolManifest;
 pub use tool_name::ToolName;
+pub use tool_reference::ToolReference;
 pub use tool_version::ToolVersion;
 pub use tool_version_record::ToolVersionRecord;
 pub use valid_bundle::ValidBundle;

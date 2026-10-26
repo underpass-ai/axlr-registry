@@ -1,4 +1,4 @@
-//! What a publisher uploads: the manifest and the tool's files.
+//! What a publisher uploads: the manifest and the files of a tool or a skill.
 
 use std::collections::BTreeMap;
 
@@ -20,28 +20,28 @@ impl Bundle {
         Self { manifest, files }
     }
 
-    /// Checks the bundle against the forged-tool and registry rules and
-    /// computes its digests.
+    /// Checks the bundle against the manifest's rules (a forged tool's or
+    /// a skill's) and the registry's, and computes its digests.
     pub fn validate(self) -> Result<ValidBundle, DomainError> {
         let manifest = Manifest::parse(&self.manifest)?;
-        let mut distinct = manifest.files.clone();
+        let mut distinct = manifest.files().to_vec();
         distinct.sort();
         distinct.dedup();
-        if distinct.len() != manifest.files.len() {
+        if distinct.len() != manifest.files().len() {
             return Err(DomainError::invalid("bundle", "files lists a name twice"));
         }
-        if self.files.len() != manifest.files.len() {
+        if self.files.len() != manifest.files().len() {
             return Err(DomainError::invalid("bundle", "every file named in the manifest is uploaded, and no other"));
         }
         let mut digests = BTreeMap::new();
-        for name in &manifest.files {
+        for name in manifest.files() {
             let content =
                 self.files.get(name).ok_or_else(|| DomainError::invalid("bundle", format!("file {} was not uploaded", name.as_str())))?;
             if content.is_empty() || content.len() > MAX_FILE_BYTES {
                 return Err(DomainError::invalid("bundle", format!("file {} is empty or over 256 KiB", name.as_str())));
             }
             if content.contains(&0) {
-                return Err(DomainError::invalid("bundle", format!("file {} is binary; tools are text", name.as_str())));
+                return Err(DomainError::invalid("bundle", format!("file {} is binary; a bundle is text", name.as_str())));
             }
             digests.insert(name.clone(), Digest::of(content));
         }
@@ -112,5 +112,29 @@ mod tests {
         .unwrap();
         assert!(Bundle::new(manifest, BTreeMap::new()).validate().is_err(), "nine files accepted");
         assert!(FileName::parse("../count.py").is_err());
+    }
+
+    #[test]
+    fn a_skill_is_a_bundle_of_text_files_with_the_same_digests() {
+        let manifest = serde_json::to_vec(&serde_json::json!({
+            "kind": "skill", "name": "acme_triage", "description": "Triage an incident.", "files": ["SKILL.md", "checklist.md"],
+            "catalog": {"version": "1.0.0", "category": "programming", "license": "MIT"}
+        }))
+        .unwrap();
+        let ok = files(&[("SKILL.md", b"# Triage\nSee [the list](checklist.md).\n"), ("checklist.md", b"- logs\n")]);
+        let bundle = Bundle::new(manifest.clone(), ok.clone()).validate().unwrap();
+        assert_eq!((bundle.name().as_str(), bundle.version().to_string().as_str()), ("acme_triage", "1.0.0"));
+        assert_eq!(bundle.manifest().kind(), crate::Kind::Skill);
+        assert_eq!(bundle.file_digests().len(), 2);
+        let big = vec![b'x'; super::MAX_FILE_BYTES + 1];
+        let refused: Vec<(&str, BTreeMap<FileName, Vec<u8>>)> = vec![
+            ("binary", files(&[("SKILL.md", b"a\x00b"), ("checklist.md", b"x")])),
+            ("oversized", files(&[("SKILL.md", big.as_slice()), ("checklist.md", b"x")])),
+            ("empty", files(&[("SKILL.md", b""), ("checklist.md", b"x")])),
+            ("missing", files(&[("SKILL.md", b"x")])),
+        ];
+        for (label, files) in refused {
+            assert!(Bundle::new(manifest.clone(), files).validate().is_err(), "{label} skill file was accepted");
+        }
     }
 }

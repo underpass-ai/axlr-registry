@@ -22,7 +22,7 @@ fn the_published_reference_tools_validate_and_scan_clean() {
         let bundle = fixture(name).validate().unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(bundle.name().as_str(), name);
         assert_eq!(bundle.version().to_string(), "1.0.0");
-        assert!(!bundle.manifest().catalog.network);
+        assert!(!bundle.manifest().catalog().network);
         let report = PolicyScan::run(&bundle);
         assert!(!report.is_blocking(), "{name}: {:?}", report.findings);
         assert!(report.warnings().is_empty(), "{name}: {:?}", report.findings);

@@ -42,14 +42,14 @@ impl ValidBundle {
         &self.manifest
     }
 
-    /// The tool name.
+    /// The name of the tool or skill.
     pub fn name(&self) -> &ToolName {
-        &self.manifest.name
+        self.manifest.name()
     }
 
     /// The version.
     pub fn version(&self) -> &Version {
-        &self.manifest.catalog.version
+        self.manifest.version()
     }
 
     /// The manifest exactly as uploaded: what the store keeps and the

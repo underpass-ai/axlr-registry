@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use registry_domain::Manifest;
+use registry_domain::ToolManifest;
 
 use crate::{CaseResult, Limits, RunnerError, Sandbox, TestRun, TestSuite};
 
@@ -15,7 +15,7 @@ pub struct SuiteRunner {
 
 impl SuiteRunner {
     /// A runner for the tool whose files are in `dir`.
-    pub fn new(dir: &Path, manifest: &Manifest, limits: Limits) -> Self {
+    pub fn new(dir: &Path, manifest: &ToolManifest, limits: Limits) -> Self {
         Self { sandbox: Sandbox::new(dir, &manifest.program, &manifest.args, limits), limits }
     }
 
@@ -51,22 +51,18 @@ impl SuiteRunner {
 pub(crate) mod tests {
     use std::time::{Duration, Instant};
 
-    use registry_domain::Manifest;
+    use registry_domain::ToolManifest;
 
     use super::SuiteRunner;
     use crate::{Limits, TestSuite};
 
     pub(crate) const COUNT: &str = "import json, sys\nd = json.load(sys.stdin)\nif 'items' not in d:\n    print('items must be a list')\n    sys.exit(2)\nprint(json.dumps({'n': len(d['items']), 'first': d['items'][:1]}))\n";
 
-    pub(crate) fn manifest(program: &str) -> Manifest {
-        Manifest::parse(
-            serde_json::json!({
-                "name": "acme_count", "description": "Count items.", "input_schema": {"type": "object"}, "program": program,
-                "args": ["count.py"], "files": ["count.py"], "catalog": {"version": "1.0.0", "category": "data", "license": "MIT"}
-            })
-            .to_string()
-            .as_bytes(),
-        )
+    pub(crate) fn manifest(program: &str) -> ToolManifest {
+        ToolManifest::from_json(serde_json::json!({
+            "name": "acme_count", "description": "Count items.", "input_schema": {"type": "object"}, "program": program,
+            "args": ["count.py"], "files": ["count.py"], "catalog": {"version": "1.0.0", "category": "data", "license": "MIT"}
+        }))
         .unwrap()
     }
 

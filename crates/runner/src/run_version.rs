@@ -39,7 +39,8 @@ impl<A: ArtifactStore, T: ToolRepository, L: AuditLog, C: Clock> RunVersion<'_, 
             files.get(&manifest_name).ok_or_else(|| ApplicationError::NotFound(format!("{}@{version} in quarantine", name.as_str())))?;
         let run = match Manifest::parse(manifest_bytes) {
             Err(e) => TestRun::failed_before_start("manifest.json", e.to_string()),
-            Ok(manifest) => match files.get(&tests_name) {
+            Ok(Manifest::Skill(_)) => TestRun::failed_before_start("manifest.json", "a skill has no program to run".to_owned()),
+            Ok(Manifest::Tool(manifest)) => match files.get(&tests_name) {
                 None => TestRun::failed_before_start("tests.json", "missing: the version was uploaded without tests".to_owned()),
                 Some(tests) => match TestSuite::parse(tests) {
                     Err(e) => TestRun::failed_before_start("tests.json", e.to_string()),
