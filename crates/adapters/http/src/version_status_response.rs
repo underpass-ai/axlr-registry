@@ -1,7 +1,7 @@
 //! What the publisher gets when asking about a version.
 
 use registry_application::use_cases::VersionReport;
-use registry_domain::{Finding, Status};
+use registry_domain::{Finding, Kind, Status};
 use time::format_description::well_known::Rfc3339;
 
 /// `GET /v1/versions/{name}/{version}`.
@@ -11,6 +11,8 @@ pub struct VersionStatusResponse {
     pub name: String,
     /// The version.
     pub version: String,
+    /// `tool` or `skill`.
+    pub kind: Kind,
     /// The status.
     pub status: Status,
     /// When it was submitted, RFC 3339.
@@ -30,6 +32,7 @@ impl From<VersionReport> for VersionStatusResponse {
         Self {
             name: report.name.as_str().to_owned(),
             version: report.version.to_string(),
+            kind: report.kind,
             status: report.status,
             submitted_at: report.submitted_at.format(&Rfc3339).expect("a timestamp formats"),
             findings: report.scan.map(|s| s.findings).unwrap_or_default(),

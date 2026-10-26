@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::Client;
 use registry_application::ports::{ArtifactStore, IndexWriter};
-use registry_domain::{Bundle, FileName, Status, ToolName, Version};
+use registry_domain::{Bundle, FileName, Kind, Status, ToolName, Version};
 use registry_s3::{Bucket, ObjectKey, S3Artifacts, S3Index};
 
 async fn bucket() -> Bucket {
@@ -60,7 +60,7 @@ async fn uploads_land_in_quarantine_by_status_and_approved_ones_are_published() 
     let store = S3Artifacts::new(bucket.clone());
     let name = ToolName::parse("acme_count").unwrap();
     let version = Version::parse("1.0.0").unwrap();
-    assert!(store.publish(&name, &version).await.is_err(), "published a version that was never quarantined");
+    assert!(store.publish(Kind::Tool, &name, &version).await.is_err(), "published a version that was never quarantined");
 
     let rejected = bundle("import socket\n");
     store.quarantine(&rejected, Status::Rejected).await.unwrap();
@@ -83,8 +83,8 @@ async fn uploads_land_in_quarantine_by_status_and_approved_ones_are_published() 
         .await
         .unwrap();
 
-    store.publish(&name, &version).await.unwrap();
-    let prefix = ObjectKey::published_prefix(&name, &version);
+    store.publish(Kind::Tool, &name, &version).await.unwrap();
+    let prefix = ObjectKey::published_prefix(Kind::Tool, &name, &version);
     let (content_type, published) = object(&bucket, &format!("{prefix}manifest.json")).await.unwrap();
     assert_eq!(published, scanned.manifest_bytes());
     assert_eq!(content_type, "application/json");
@@ -93,7 +93,7 @@ async fn uploads_land_in_quarantine_by_status_and_approved_ones_are_published() 
     assert_eq!(content_type, "text/plain; charset=utf-8");
     assert!(object(&bucket, &format!("{prefix}helper.py")).await.is_some());
     assert!(object(&bucket, &format!("{prefix}tests.json")).await.is_none(), "tests.json was published");
-    store.publish(&name, &version).await.unwrap_or_else(|e| panic!("publishing twice is not idempotent: {e}"));
+    store.publish(Kind::Tool, &name, &version).await.unwrap_or_else(|e| panic!("publishing twice is not idempotent: {e}"));
 }
 
 #[tokio::test]
@@ -111,4 +111,25 @@ async fn the_index_goes_to_staging_then_published_with_its_signature() {
     let (_, signature) = object(&bucket, ObjectKey::PUBLISHED_SIGNATURE).await.unwrap();
     assert!(signature.starts_with(b"untrusted comment: x\n"));
     assert!(index.read("nowhere/at/all").await.unwrap().is_none());
+}
+
+#[tokio::test]
+#[ignore = "needs MinIO"]
+async fn an_approved_skill_is_published_under_skills() {
+    let bucket = bucket().await;
+    let store = S3Artifacts::new(bucket.clone());
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "kind": "skill", "name": "acme_triage", "description": "Triage an incident.", "files": ["SKILL.md"],
+        "catalog": {"version": "1.0.0", "category": "programming", "license": "MIT"}
+    }))
+    .unwrap();
+    let files: BTreeMap<FileName, Vec<u8>> = [(FileName::parse("SKILL.md").unwrap(), b"# Triage\n".to_vec())].into();
+    let skill = Bundle::new(manifest, files).validate().unwrap();
+    store.quarantine(&skill, Status::Scanned).await.unwrap();
+    store.publish(Kind::Skill, skill.name(), skill.version()).await.unwrap();
+    let prefix = ObjectKey::published_prefix(Kind::Skill, skill.name(), skill.version());
+    assert_eq!(prefix, "published/skills/acme_triage/1.0.0/");
+    assert_eq!(object(&bucket, &format!("{prefix}SKILL.md")).await.unwrap().1, b"# Triage\n");
+    assert_eq!(object(&bucket, &format!("{prefix}manifest.json")).await.unwrap().1, skill.manifest_bytes());
+    assert!(object(&bucket, "published/tools/acme_triage/1.0.0/SKILL.md").await.is_none(), "a skill was published as a tool");
 }

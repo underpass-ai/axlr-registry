@@ -149,7 +149,7 @@ mod tests {
     use registry_application::ports::{Clock as _, PublisherRepository as _};
     use registry_application::use_cases::{RegisterPublisher, SuspendPublisher};
     use registry_application::{Principal, Role};
-    use registry_domain::{Contact, KeyId, PublisherId, PublisherStatus, ReviewerId, Scope, Status};
+    use registry_domain::{Contact, KeyId, Kind, PublisherId, PublisherStatus, ReviewerId, Scope, Status};
     use registry_memory::{
         FixedClock, MemoryArtifacts, MemoryAudit, MemoryIdempotency, MemoryNonces, MemoryPublishers, MemoryRates, MemoryTools,
         RecordingScheduler,
@@ -286,7 +286,8 @@ mod tests {
         let status = api.handle(request(&w, Method::GET, "/v1/versions/acme_count/1.0.0", Body::Empty, None)).await;
         assert_eq!(status.status(), StatusCode::OK, "{:?}", status.body());
         let body: VersionStatusResponse = serde_json::from_slice(status.body().as_ref()).unwrap();
-        assert_eq!((body.status, body.tests_passed), (Status::Scanned, None));
+        assert_eq!((body.kind, body.status, body.tests_passed), (Kind::Tool, Status::Scanned, None));
+        assert!(std::str::from_utf8(status.body().as_ref()).unwrap().contains(r#""kind":"tool""#));
         assert_eq!(body.submitted_at, "2026-10-17T12:00:00Z");
 
         let rejected = api.handle(upload(&w, "1.1.0", "import socket\n", None)).await;

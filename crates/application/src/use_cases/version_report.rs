@@ -1,6 +1,6 @@
 //! What a publisher sees when asking about a version.
 
-use registry_domain::{ScanReport, Status, TestReport, Timestamp, ToolName, ToolVersion, Version};
+use registry_domain::{Kind, ScanReport, Status, TestReport, Timestamp, ToolName, ToolVersion, Version};
 
 /// The state of a version, as the publisher may know it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9,6 +9,8 @@ pub struct VersionReport {
     pub name: ToolName,
     /// The version.
     pub version: Version,
+    /// A tool or a skill.
+    pub kind: Kind,
     /// The status.
     pub status: Status,
     /// When it was submitted.
@@ -29,6 +31,7 @@ impl VersionReport {
         Self {
             name: version.name().clone(),
             version: version.version().clone(),
+            kind: version.kind(),
             status: version.status(),
             submitted_at: version.submitted_at(),
             scan: version.scan().cloned(),

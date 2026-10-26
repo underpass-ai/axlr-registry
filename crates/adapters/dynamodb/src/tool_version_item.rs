@@ -169,7 +169,7 @@ pub(crate) mod tests {
 
     use ed25519_dalek::SigningKey;
     use registry_domain::{
-        Bundle, FileName, PolicyScan, Publisher, PublisherId, PublisherSignature, ReviewerId, Scope, Status, TestReport, ToolVersion,
+        Bundle, FileName, Kind, PolicyScan, Publisher, PublisherId, PublisherSignature, ReviewerId, Scope, Status, TestReport, ToolVersion,
     };
     use time::macros::datetime;
 
@@ -226,6 +226,53 @@ pub(crate) mod tests {
             assert_eq!(ToolVersionItem::decode(&item).unwrap(), v, "{:?} did not round-trip", v.status());
         }
         assert_eq!(ToolVersionItem::status_text(Status::Yanked), "yanked");
+    }
+
+    /// A scanned skill `acme_triage` at `number`.
+    pub(crate) fn skill_version(number: &str, skill_md: &str) -> ToolVersion {
+        let (p, key) = acme();
+        let manifest = serde_json::to_vec(&serde_json::json!({
+            "kind": "skill", "name": "acme_triage", "description": "Triage an incident. From its logs.", "files": ["SKILL.md"],
+            "tools": ["local_read", "github/list_issues"], "catalog": {"version": number, "category": "programming", "license": "MIT"}
+        }))
+        .unwrap();
+        let files: BTreeMap<FileName, Vec<u8>> = [(FileName::parse("SKILL.md").unwrap(), skill_md.as_bytes().to_vec())].into();
+        let bundle = Bundle::new(manifest, files).validate().unwrap();
+        let mut v = ToolVersion::submit(&bundle, &p, PublisherSignature::sign(&key, bundle.bundle_digest()), NOW).unwrap();
+        v.record_scan(PolicyScan::run(&bundle), NOW).unwrap();
+        v
+    }
+
+    #[test]
+    fn round_trips_skills_and_reads_tool_items_without_a_kind() {
+        let scanned = skill_version("1.0.0", "# Triage\n");
+        let mut approved = skill_version("1.1.0", "# Triage\nTimeline first.\n");
+        approved.record_tests(TestReport::new(4, 4, vec![], NOW)).unwrap();
+        approved.approve(ReviewerId::parse("ana").unwrap(), "fine".into(), NOW).unwrap();
+        let mut yanked = approved.clone();
+        yanked.withdraw("ops".into(), "wrong steps".into(), NOW).unwrap();
+        let blocked = skill_version("1.2.0", &format!("# {}\n", "QUJD".repeat(60)));
+        assert_eq!(blocked.status(), Status::Rejected);
+        for v in [scanned, approved, yanked, blocked] {
+            let item = Item::from_map(ToolVersionItem::encode(&v).unwrap().into_map());
+            assert!(item.string("manifest").unwrap().starts_with(r#"{"kind":"skill""#));
+            let back = ToolVersionItem::decode(&item).unwrap();
+            assert_eq!(back.kind(), Kind::Skill);
+            assert_eq!(back, v, "{:?} skill did not round-trip", v.status());
+        }
+        // A tool item stores its manifest exactly as before skills: no kind,
+        // and such an item reads back as a tool.
+        let tool = version("1.0.0", "print(1)\n");
+        let item = ToolVersionItem::encode(&tool).unwrap();
+        let stored = item.string("manifest").unwrap().to_owned();
+        assert!(!stored.contains("kind"), "{stored}");
+        assert!(stored.starts_with(r#"{"name":"acme_count","description":"#), "{stored}");
+        let old = item.set_string(
+            "manifest",
+            r#"{"name":"acme_count","description":"Count things. Exactly.","input_schema":{"type":"object"},"program":"python3","args":["count.py"],"files":["count.py"],"catalog":{"version":"1.0.0","category":"data","tags":[],"license":"MIT","requires":{"packages":[]},"network":false}}"#,
+        );
+        assert_eq!(old.string("manifest").unwrap(), stored, "the stored form of a tool manifest changed");
+        assert_eq!(ToolVersionItem::decode(&old).unwrap().kind(), Kind::Tool);
     }
 
     #[test]
