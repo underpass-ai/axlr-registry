@@ -33,12 +33,12 @@ local *args:
     cargo run -p registry-local -- {{args}}
 
 lambdas:
-    cargo lambda build --release --arm64 --workspace
+    cargo lambda build --release --arm64 --workspace --exclude registry-local
 
 # Local deploy, the same steps the release job runs: binaries, the runner image (pushed only
 # when its tag is new) and sam deploy with prebuilt artifacts. Needs cargo-lambda, docker, sam.
 deploy stage="staging" region="eu-south-2" account="203918869295":
-    cargo lambda build --release --arm64 --workspace
+    cargo lambda build --release --arm64 --workspace --exclude registry-local
     cp target/lambda/test-runner/bootstrap infra/test-runner/bootstrap
     aws ecr get-login-password --region {{region}} | docker login --username AWS --password-stdin {{account}}.dkr.ecr.{{region}}.amazonaws.com
     TAG=$(cat infra/test-runner/Dockerfile infra/test-runner/bootstrap | sha256sum | cut -c1-32); \
