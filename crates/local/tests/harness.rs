@@ -51,9 +51,9 @@ async fn harness(auto_approve: bool, confinement: Confinement) -> Harness {
     let (server, registry) = registry_local::start(&options, confinement).await.unwrap();
     let base = server.base_url();
     let banner = registry_local::banner(&options, &server, &registry);
-    assert!(banner.contains(&format!("base_url    {base}")), "{banner}");
-    assert!(banner.contains(&format!("public_key  {}", registry.key().public_key_line())), "{banner}");
-    assert!(banner.contains("acme (key id "), "{banner}");
+    assert!(banner.contains(&format!("base_url    {base}")));
+    assert!(banner.contains(&format!("public_key  {}", registry.key().public_key_line())));
+    assert!(banner.contains("acme (key id "));
     let server = tokio::spawn(server.serve(Arc::clone(&registry)));
     let catalog = reqwest::Client::builder().user_agent("AXLR-catalog").build().unwrap();
     Harness { base, registry, server, key_dir, key, catalog }
@@ -95,7 +95,7 @@ impl Harness {
         let public = std::fs::read_to_string(self.key_dir.path().join(IndexKey::PUBLIC_FILE)).unwrap();
         let public = RegistryPublicKey::parse(&public).unwrap();
         let signature = IndexSignature::parse(std::str::from_utf8(&signature).unwrap()).unwrap();
-        assert!(signature.trusted_comment().ends_with("\tfile:index.json\tprehashed"), "{}", signature.trusted_comment());
+        assert!(signature.trusted_comment().ends_with("\tfile:index.json\tprehashed"));
         signature.verify(&public, &index).unwrap();
         serde_json::from_slice(&index).unwrap()
     }
@@ -240,5 +240,5 @@ async fn refuses_to_listen_off_the_loopback() {
             .unwrap();
     let (server, registry) = registry_local::start(&options, Confinement::Environment).await.unwrap();
     let banner = registry_local::banner(&options, &server, &registry);
-    assert!(banner.contains("none registered") && banner.contains("tools run unconfined") && banner.contains("automatic"), "{banner}");
+    assert!(banner.contains("none registered") && banner.contains("tools run unconfined") && banner.contains("automatic"));
 }

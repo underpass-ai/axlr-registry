@@ -2395,6 +2395,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "lambda_http",
+ "rand 0.8.8",
  "registry-application",
  "registry-domain",
  "registry-http",
