@@ -24,13 +24,14 @@ The registry owns publishers, tools, versions, reviews and index snapshots. It d
 | `RateLimit`, `RateWindow` | a positive count; a minute, hour or UTC-day window aligned to the clock | 60 requests per minute and 20 uploads per day per key unless overridden, 5 enrolments per hour per address |
 | `ToolName` | the forged-tool rule `^[a-z][a-z0-9_]{1,47}$` | one owner for life; a name is reserved to its publisher at the first accepted submission |
 | `Version` | semver `MAJOR.MINOR.PATCH` | a new version is strictly greater than every version the tool already has, approved or not |
-| `Bundle` | `manifest.json` bytes plus one to eight files | the manifest is a forged tool plus its `catalog` block; `args` names one of the files; file names are `[A-Za-z0-9_.-]+` with no path; text only (no NUL byte), at most 256 KiB each; `BundleDigest` = SHA-256 of the canonical listing `manifest <digest>` then `file <name> <digest>` sorted |
+| `Kind` | `tool` or `skill`, read from the manifest's `kind`; absent is `tool` | a name is one kind for life (see "Skills") |
+| `Bundle` | `manifest.json` bytes plus one to eight files | the manifest is a forged tool plus its `catalog` block (`ToolManifest`), or a skill's (`SkillManifest`, see "Skills"); a tool's `args` names one of the files; file names are `[A-Za-z0-9_.-]+` with no path; text only (no NUL byte), at most 256 KiB each; `BundleDigest` = SHA-256 of the canonical listing `manifest <digest>` then `file <name> <digest>` sorted |
 | `PublisherSignature` | key id, 64-byte Ed25519 signature over `axlr-tool-bundle-v1\n<bundle digest>` | verifies with an active key of the submitting publisher at submission time |
 | `ToolVersion` | name, version, publisher, manifest digest, file digests, bundle digest, signature, category, summary…, status, scan, tests, review | status machine: `submitted → scanned → approved \| rejected`, `approved → yanked`; a yank keeps the record and carries a reason |
 | `ScanReport` | findings (rule, file, line, severity `block` or `warn`, detail) | `block` findings reject the version automatically; `warn` findings are shown to the reviewer and on the card |
-| `TestReport` | cases, passed, failed; produced by the sandbox adapter from `tests.json` | approval needs every case passed |
+| `TestReport` | cases, passed, failed; produced by the sandbox adapter from a tool's `tests.json`, or by the skill checks | approval needs every case passed |
 | `Review` | reviewer, decision, reason, time | the reviewer is not the publisher; approval needs a clean scan and a passing test report |
-| `IndexSnapshot` | `schema_version`, `catalog`, `generated_at`, `tools[]` (the client's entry fields plus `publisher`, `publisher_key_id`, `bundle_sha256`, `signature`, `reviewed_at`, `reviewer`), `revocations[]` (name, version, reason, time), `revoked_keys[]` | built only from approved, non-yanked versions; its canonical bytes are what the registry key signs |
+| `IndexSnapshot` | `schema_version`, `catalog`, `generated_at`, `tools[]` (the client's entry fields plus `publisher`, `publisher_key_id`, `bundle_sha256`, `signature`, `reviewed_at`, `reviewer`), `skills[]` (see "Skills"), `revocations[]` (name, version, reason, time), `revoked_keys[]` | built only from approved, non-yanked versions; its canonical bytes are what the registry key signs |
 
 ### Policy scan (deterministic, in the domain)
 
@@ -46,6 +47,45 @@ Rules run over every file by the manifest's `program`:
 | binary or oversized file | a NUL byte, more than 256 KiB | | | `block` |
 
 A scan is a pure function of the bundle, so the same bundle always yields the same report and the reviewer can reproduce it.
+
+## Skills
+
+A catalog entry is a tool or a skill. A skill is guidance the model opens on demand (`axlr_skill` in the console): a few text files and the tools the procedure expects, with no program. Everything else is shared with tools: the name space and its ownership, the bundle and its digests, the publisher signature, the version lifecycle, the review, the index and its signature, and revocations. The aggregate keeps its name, `Tool`, and stands for a catalog entry of either kind.
+
+```json
+{"kind": "skill", "name": "incident_triage", "description": "Triage a production incident from its logs: timeline, blast radius, first hypothesis, next check.",
+ "files": ["SKILL.md", "checklist.md"], "tools": ["local_read", "local_search", "log_summarise"],
+ "catalog": {"version": "1.0.0", "category": "programming", "tags": ["sre", "incident"], "license": "MIT", "source": "original"}}
+```
+
+| Field | Rule |
+|:--|:--|
+| `kind` | `skill`. A manifest without `kind`, or with `kind: tool`, is a tool and reads exactly as before skills; any other value is refused |
+| `name` | the `ToolName` rule, in the same name space as tools: one owner for life, and one kind for life. `Tool::add` refuses a version of the other kind with `<name> is a tool; a skill needs another name` (and the reverse) |
+| `description` | 1 to 1024 characters, not blank |
+| `files` | one to eight flat names (`FileName`), `SKILL.md` among them; text (no NUL byte), at most 256 KiB each, as a tool's |
+| `tools` | zero to 32 distinct `ToolReference`s, `^[a-z][a-z0-9_]{0,63}(/[A-Za-z0-9_.-]{1,64})?$`: a built-in or catalog tool, or an MCP tool as `server/tool`. Informative: nothing is installed with the skill |
+| `catalog` | `version`, `category` and `license` required, `tags` and `source` optional, as a tool's; `requires` empty or absent, `network` false or absent, `example` absent |
+
+Unknown fields are refused for either kind, so a manifest is one kind, and since the bundle digest covers the manifest, a tool's signature cannot be presented as a skill's. In the crate, `Manifest` is an enum over `ToolManifest` and `SkillManifest`; only a tool has a program.
+
+**Scan.** A skill runs nothing, so the program rules do not apply. Every line of every file, Markdown headings included, goes through the obfuscation rule (base64 or hex blobs of 200 characters or more, runs of `\x` escapes), which blocks.
+
+**Checks instead of tests.** The runner starts no program for a skill and needs no sandbox. It records a report of five cases, each a deterministic check over the quarantined files (`SkillCheck` in the runner crate):
+
+| Case | Passes when |
+|:--|:--|
+| `SKILL.md` | the file is present and valid UTF-8 |
+| `front_matter` | `SKILL.md` does not open with a `---` line, or its front matter is closed by another `---` line and its `name:`, when present, is the manifest's name |
+| `links` | every inline Markdown link in `SKILL.md` whose target has no scheme and is not absolute names one of the bundle's files, once a `#anchor` or `?query` and a leading `./` are removed; fenced code blocks are skipped |
+| `tools` | every `tools` entry is a well-formed tool reference |
+| `tests.json` | there is none, or it is a non-empty list of `{name, prompt, expect}` with distinct, non-blank names, a non-blank prompt, and `expect` keys only from `tools` and `answer_contains` (lists of strings) |
+
+The registry has no model, so it does not run a skill's cases; `tests.json` stays in quarantine beside the bundle, as a tool's does, unsigned and never published. A skill without `tests.json` passes on the other checks and is approvable; a tool without tests is still not.
+
+**Index.** `skills[]` sits beside `tools[]`, always present and empty when no skill is approved; entries are built from approved, non-yanked skill versions and sorted by name then version. A skill entry has exactly `name`, `version`, `category`, `tags`, `summary`, `license`, `manifest` (`skills/<name>/<version>/manifest.json`), `manifest_sha256`, `files`, `tools`, `updated_at`, `publisher`, `publisher_key_id`, `bundle_sha256`, `signature`, `reviewed_at`, `reviewer` and `warnings` (omitted when empty): no `program`, `requires` or `network`. Yanked skill versions go to the shared `revocations` (a name is unique across kinds). Tool entries are unchanged, and a console from before skills ignores `skills`.
+
+**Layout.** The same DynamoDB items and quarantine prefixes as tools. The stored manifest of a skill carries `"kind": "skill"`; a tool's is stored without `kind`, byte for byte as before, so items written before skills read as tools. An approved skill's manifest and files are published under `published/skills/<name>/<version>/` and served as `skills/<name>/<version>/…`. The version reports (`GET /v1/versions/{name}/{version}` for the publisher and the reviewer, and the reviewer's queue) carry `kind`.
 
 ## Commands, events and who may run them
 
@@ -82,7 +122,7 @@ The console's catalog client reads the entry fields through `updated_at` and ign
 
 ## Layout
 
-The registry serves `tools/<name>/<version>/manifest.json` and the files beside it, one directory per version, so an old version's files never change. The static catalog repository in AXLR serves `tools/<category>/<name>/`; the console follows the `manifest` path in the index either way. The versioned layout is canonical for anything the registry publishes.
+The registry serves `tools/<name>/<version>/manifest.json` and the files beside it, one directory per version, so an old version's files never change; skills are served the same way under `skills/<name>/<version>/`. The static catalog repository in AXLR serves `tools/<category>/<name>/`; the console follows the `manifest` path in the index either way. The versioned layout is canonical for anything the registry publishes.
 
 ## What is deliberately left out
 
@@ -90,4 +130,4 @@ Multiple channels, delegated identity (GitHub), download counts, dependency reso
 
 ## Verification
 
-`cargo test --workspace` covers: the publisher status machine and namespace narrowing, the canonical request message and a pinned signature vector, every check of a signed request in order with the minute, day and per-address windows, revoked keys, bundle validation (path traversal, `args` outside the files, nine files, a binary file), signature verification and tampering, every scan rule with the block/warn split by the `network` declaration, the version state machine (approval refused without a clean scan or passing tests or by the publisher, yank only when approved, version ordering, immutability), and the index (only approved and non-yanked versions, revocations carried, canonical bytes stable and carrying the fields the console client reads).
+`cargo test --workspace` covers: the publisher status machine and namespace narrowing, the canonical request message and a pinned signature vector, every check of a signed request in order with the minute, day and per-address windows, revoked keys, bundle validation (path traversal, `args` outside the files, nine files, a binary file), signature verification and tampering, every scan rule with the block/warn split by the `network` declaration, the version state machine (approval refused without a clean scan or passing tests or by the publisher, yank only when approved, version ordering, immutability), the index (only approved and non-yanked versions, revocations carried, canonical bytes stable and carrying the fields the console client reads), and skills (the manifest rules and `kind` dispatch, a name keeping its kind, the obfuscation-only scan, the five checks, the `skills` list with exactly its fields, publication under `skills/`, and a stored tool manifest unchanged).

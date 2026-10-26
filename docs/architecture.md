@@ -119,6 +119,7 @@ crates/
     test-runner/
     index-publisher/
   cli/                     axlr-registry: publisher (sign, upload), reviewer, operator (sign-index)
+  local/                   axlr-registry-local: memory adapters, the use cases and the publish API on the loopback
 infra/
   template.yaml            SAM: functions, HTTP APIs with domains and mTLS, table, buckets, CloudFront, Route 53
   test-runner/Dockerfile   python3, bash, node on the Lambda base image

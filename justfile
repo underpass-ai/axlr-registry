@@ -10,7 +10,7 @@ check:
 
 # Offline: the SDK-calling adapter files are excluded; `just coverage-all` counts them.
 coverage:
-    cargo llvm-cov --workspace --all-features --ignore-filename-regex 'crates/lambdas/.*/src/main\.rs|crates/adapters/(dynamodb|s3|lambda)/src/(dynamo_|s3_|lambda_|table|bucket).*\.rs' --fail-under-lines 80
+    cargo llvm-cov --workspace --all-features --ignore-filename-regex 'crates/lambdas/.*/src/main\.rs|crates/adapters/(dynamodb|s3|lambda)/src/(dynamo_|s3_|lambda_|table|bucket).*\.rs|crates/local/src/main\.rs' --fail-under-lines 80
 
 # Start DynamoDB Local and MinIO in Docker for the integration tests.
 services:
@@ -24,9 +24,13 @@ services-stop:
 integration:
     DYNAMODB_ENDPOINT=http://localhost:8000 S3_ENDPOINT=http://localhost:9000 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=testtest AWS_REGION=eu-west-1 cargo test --workspace --all-features -- --include-ignored
 
-# The CI gate: every test under llvm-cov, nothing excluded but the Lambda entry points.
+# The CI gate: every test under llvm-cov, nothing excluded but the Lambda and harness entry points.
 coverage-all:
-    DYNAMODB_ENDPOINT=http://localhost:8000 S3_ENDPOINT=http://localhost:9000 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=testtest AWS_REGION=eu-west-1 cargo llvm-cov --workspace --all-features --ignore-filename-regex 'crates/lambdas/.*/src/main\.rs' --fail-under-lines 80 -- --include-ignored
+    DYNAMODB_ENDPOINT=http://localhost:8000 S3_ENDPOINT=http://localhost:9000 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=testtest AWS_REGION=eu-west-1 cargo llvm-cov --workspace --all-features --ignore-filename-regex 'crates/lambdas/.*/src/main\.rs|crates/local/src/main\.rs' --fail-under-lines 80 -- --include-ignored
+
+# The registry from memory on the loopback, for end-to-end runs without AWS (docs/operations.md).
+local *args:
+    cargo run -p registry-local -- {{args}}
 
 lambdas:
     cargo lambda build --release --arm64 --workspace

@@ -1,12 +1,12 @@
 # axlr-registry
 
-The write side of the AXLR tool catalog: a small, safe artifact registry for pre-forged tools, run as Rust Lambdas on AWS for close to nothing. Publishers upload signed tool versions, the registry scans them, runs their tests in a network-less sandbox and keeps them for a human reviewer; approved versions are listed in a signed `index.json` that the AXLR console installs from with `/tools install`.
+The write side of the AXLR tool catalog: a small, safe artifact registry for pre-forged tools and skills, run as Rust Lambdas on AWS for close to nothing. Publishers upload signed tool and skill versions, the registry scans them, runs their tests in a network-less sandbox and keeps them for a human reviewer; approved versions are listed in a signed `index.json` that the AXLR console installs from with `/tools install`.
 
 AXLR and this registry are sibling projects in separate repositories. This one never imports AXLR; the index format is the contract between them.
 
 | Where | What |
 |:--|:--|
-| [`docs/domain.md`](docs/domain.md) | The domain: publishers and their keys, bundles and digests, publisher signatures, the policy scan, the version state machine, tools, the signed index, key revocation |
+| [`docs/domain.md`](docs/domain.md) | The domain: publishers and their keys, bundles and digests, publisher signatures, the policy scan, the version state machine, tools and skills, the signed index, key revocation |
 | [`docs/architecture.md`](docs/architecture.md) | Hosting (Lambda, DynamoDB, S3, CloudFront, Route 53, mTLS), data model, security, cost, code layout, tests, delivery |
 | [`crates/domain`](crates/domain/) | The domain crate: pure, one type per file, every value a validated newtype |
 | [`crates/application`](crates/application/) | Ports (traits) and use cases, one per file |
@@ -18,17 +18,19 @@ AXLR and this registry are sibling projects in separate repositories. This one n
 | [`crates/adapters/s3`](crates/adapters/s3/) | The artifact store (`quarantine/<status>/…`, `published/tools/…`) and the index writer (`staging/index.json`, `published/index.json` + `.minisig`) |
 | [`crates/adapters/lambda`](crates/adapters/lambda/) | Asynchronous invokes of `test-runner` and `index-publisher`, the system clock, the environment |
 | [`crates/adapters/http`](crates/adapters/http/) | Request and response mapping shared by the API Lambdas: signed requests, the upload and enrolment bodies, the mTLS principal, errors to status codes (429 with `Retry-After`), routing |
-| [`crates/runner`](crates/runner/) | Runs a version's `tests.json` with the `axlr_run_tool` contract (PATH and HOME only, 30 s per case, 1 MiB per stream, a whole-run deadline) and records the report |
+| [`crates/runner`](crates/runner/) | Runs a tool version's `tests.json` with the `axlr_run_tool` contract (PATH and HOME only, 30 s per case, 1 MiB per stream, a whole-run deadline; under bubblewrap off Lambda) or checks a skill's files, and records the report |
 | [`crates/cli`](crates/cli/) | `axlr-registry`: the publisher, reviewer and operator command line |
 | [`crates/lambdas/*`](crates/lambdas/) | The four Lambda entry points, each wiring the adapters above: `publish-api`, `admin-api`, `index-publisher` and `test-runner` (a container image with python3, bash and node) |
 | [`scripts/ca.sh`](scripts/ca.sh) | The local parts of `docs/operations.md`: init, issue, fingerprint, truststore, rotate, retire |
+| [`crates/local`](crates/local/) | `axlr-registry-local`: the registry from memory on the loopback (publish API, signed catalog, inline tests, automatic review) for end-to-end runs without AWS; see `docs/operations.md`, "Local harness" |
 | [`crates/e2e`](crates/e2e/) | The end-to-end scenario the release job runs against the staging stack (ignored unless `REGISTRY_E2E_*` is set) |
 | [`infra/template.yaml`](infra/template.yaml) | The SAM template |
 | [`.github/workflows`](.github/workflows/) | `ci-dev` (every push), `ci-main` (merges: coverage gate, audit, integration, Lambda build), `release` (tags: build, staging, e2e, production) |
 
 ```bash
 just check         # fmt, clippy -D warnings, cargo test --workspace
-just coverage      # cargo llvm-cov, 80 % line gate, offline (Lambda main.rs and the SDK-calling adapter files excluded)
+just coverage      # cargo llvm-cov, 80 % line gate, offline (Lambda and harness main.rs and the SDK-calling adapter files excluded)
+just local         # axlr-registry-local on 127.0.0.1:8787 (see docs/operations.md, "Local harness")
 just services      # DynamoDB Local on :8000 and MinIO on :9000 in Docker
 just integration   # every test, the adapter integration tests included (needs the services)
 just coverage-all  # the CI gate: everything under llvm-cov, only main.rs excluded
@@ -90,6 +92,10 @@ Statuses: domain `Invalid` 400, `Unauthorized` 401, `Forbidden` 403, `NotFound` 
 | `operator fetch-index [--out index.json]` | downloads the staging index to sign |
 | `operator sign-index <index.json> --key minisign.key [--password-file …] [--out …] [--trusted-comment …]` | signs it offline with the registry's minisign key, in the form the console verifies (`minisign -V` accepts it too) |
 | `operator upload-signature <index.json.minisig>` | the API verifies the signature and publishes the index |
+
+## The local harness
+
+`cargo run -p registry-local -- --publisher-id <id> --publisher-key <base64 public key>` runs `axlr-registry-local`: the publish API, the signed catalog (`index.json`, `.minisig`, `tools/…`, `skills/…`) and `POST /local/approve|yank/{name}/{version}` on one loopback port, from memory. It prints the `base_url` and the `public_key` a console's catalog settings take. Details in [`docs/operations.md`](docs/operations.md), "Local harness".
 
 ## Integration tests
 
