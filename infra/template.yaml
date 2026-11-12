@@ -111,6 +111,8 @@ Resources:
   # Only AXLR clients read the catalog: a viewer-request function (free tier: 2 M invocations a month)
   # answers 403 unless the User-Agent starts with "axlr". Identification, not authentication: the
   # catalog is public data signed by the registry key; the gate keeps scanners and browsers out.
+  # Three paths answer anyone, from the function itself (12 Nov 2026): /robots.txt, the RFC 9116
+  # /.well-known/security.txt and / (what this host is), so a plain HTTP fetch can read them.
   AxlrClientsOnly:
     Type: AWS::CloudFront::Function
     Properties:
@@ -118,7 +120,16 @@ Resources:
       AutoPublish: true
       FunctionConfig: { Comment: 'Refuse viewers whose User-Agent is not AXLR', Runtime: cloudfront-js-2.0 }
       FunctionCode: |
+        var PUBLIC = {
+          '/robots.txt': 'User-agent: *\nDisallow: /\n',
+          '/.well-known/security.txt': 'Contact: mailto:security@underpassai.com\nExpires: 2027-11-12T00:00:00.000Z\nPolicy: https://github.com/underpass-ai/AXLR/blob/main/SECURITY.md\nPreferred-Languages: en, es\nCanonical: https://registry.underpassai.com/.well-known/security.txt\n',
+          '/': 'registry.underpassai.com serves the signed catalog of pre-forged tools that the AXLR console installs.\nOnly AXLR clients read it (any other User-Agent gets 403). The catalog and how it is signed: https://axlr.underpassai.com/registry/\nPrivacy: https://axlr.underpassai.com/privacy/\nSecurity: https://registry.underpassai.com/.well-known/security.txt\n'
+        };
         function handler(event) {
+          var text = PUBLIC[event.request.uri];
+          if (text !== undefined) {
+            return { statusCode: 200, statusDescription: 'OK', headers: { 'content-type': { value: 'text/plain; charset=utf-8' }, 'cache-control': { value: 'public, max-age=3600' } }, body: text };
+          }
           var agent = (event.request.headers['user-agent'] || {}).value || '';
           if (agent.substring(0, 4).toLowerCase() !== 'axlr') {
             return { statusCode: 403, statusDescription: 'Forbidden', headers: { 'content-type': { value: 'application/json' } }, body: '{"error":"forbidden: client is not AXLR"}' };
